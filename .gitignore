@@ -1,0 +1,44 @@
+# Ignorar todos los archivos de Excel y CSV para proteger la data confidencial
+*.csv
+*.xlsx
+*.xls
+
+# Carpetas donde el usuario pondra los archivos crudos y saldran los procesados
+data/
+inputs/
+outputs/
+temp/
+archivos_crudos/
+
+# Cache local con datos procesados (parquet files)
+local_cache/
+
+# 2. Entornos Virtuales y Credenciales
+venv/
+env/
+entorno/
+.entorno/
+.venv/
+.env
+
+# 3. Archivos compilados de Python y Caché
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# 4. Logs y Registros de la Aplicación
+*.log
+logs/
+
+# 5. Artefactos de Compilación (Desktop App)
+# Cuando uses PyInstaller o similar para volver la app un .exe o ejecutable
+build/
+dist/
+*.spec
+
+# 6. Configuraciones de IDE y Sistema Operativo
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
