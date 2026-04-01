@@ -239,6 +239,7 @@ class TendenciaEgresos(ft.Container):
             df_egr = df_egr[df_egr["Origen"].str.strip().str.upper() == "CAJA"].copy()
             df_egr["Categoria"] = df_egr["Caja_Real"]
             
+            # Cargar auxiliar 2335 (gastos)
             ruta_gastos = "local_cache/gastos_2335.xlsx"
             if os.path.exists(ruta_gastos):
                 try:
@@ -265,12 +266,44 @@ class TendenciaEgresos(ft.Container):
                         df_g = df_g[['Dia', 'Dia_Semana', 'Categoria', 'MCNVALDEBI']].rename(columns={'MCNVALDEBI': 'Egreso'})
                         df_egr = pd.concat([df_egr[['Dia', 'Dia_Semana', 'Categoria', 'Egreso']], df_g], ignore_index=True)
                 except: pass
+            
+            # Cargar auxiliar 25 (nómina) - solo EGRESOS
+            ruta_nomina = "local_cache/aux_nomina_25.xlsx"
+            if os.path.exists(ruta_nomina):
+                try:
+                    df_nom = pd.read_excel(ruta_nomina)
+                    df_nom.columns = df_nom.columns.str.strip().str.upper()
+                    
+                    # Filtrar solo EGRESOS
+                    if 'MCNTIPODOC' in df_nom.columns:
+                        df_nom = df_nom[df_nom['MCNTIPODOC'].astype(str).str.upper().str.strip() == 'EGRESOS']
+                    
+                    if 'MCNVALDEBI' in df_nom.columns and 'MCNFECHA' in df_nom.columns:
+                        df_nom['MCNVALDEBI'] = pd.to_numeric(df_nom['MCNVALDEBI'], errors='coerce').fillna(0)
+                        df_nom = df_nom[df_nom['MCNVALDEBI'] > 0].copy()
+                        df_nom['Fecha'] = pd.to_datetime(df_nom['MCNFECHA'], errors='coerce')
+                        df_nom = df_nom.dropna(subset=['Fecha'])
+                        df_nom['Dia'] = df_nom['Fecha'].dt.day
+                        df_nom['Dia_Semana'] = df_nom['Fecha'].dt.dayofweek
+                        
+                        # Mapear centro de costo a nombre de caja
+                        if 'MCNCUENTA' in df_nom.columns:
+                            df_nom['CCO_Clean'] = df_nom['MCNCUENTA'].astype(str).str.extract(r'(\d{5})', expand=False)
+                            mapeo_cajas_inv = {v: k for k, v in mapeo_cajas.items()}
+                            df_nom['Categoria'] = df_nom['CCO_Clean'].apply(lambda x: mapeo_cajas_inv.get(x, "OTRAS CAJAS") if x else "OTRAS CAJAS")
+                        else:
+                            df_nom['Categoria'] = "Nómina"
+                        
+                        df_nom = df_nom[['Dia', 'Dia_Semana', 'Categoria', 'MCNVALDEBI']].rename(columns={'MCNVALDEBI': 'Egreso'})
+                        df_egr = pd.concat([df_egr, df_nom], ignore_index=True)
+                except: pass
 
         elif self.nivel_actual == "DETALLE_CAJA" and self.caja_seleccionada:
             caja_str = str(self.caja_seleccionada).upper()
             df_egr = df_egr[(df_egr["Origen"].str.strip().str.upper() == "CAJA") & (df_egr["Caja_Real"] == caja_str)].copy()
             df_egr["Categoria"] = df_egr["Tercero"].apply(lambda x: "Proveedores" if str(x).strip().upper() in prov_lista else "Otros Gastos")
             
+            # Cargar auxiliar 2335 (gastos)
             ruta_gastos = "local_cache/gastos_2335.xlsx"
             if os.path.exists(ruta_gastos):
                 try:
@@ -310,6 +343,40 @@ class TendenciaEgresos(ft.Container):
                             df_g['Categoria'] = df_g['MCNCUENTA'].apply(mapear_cuenta)
                             df_g = df_g[['Dia', 'Dia_Semana', 'Categoria', 'MCNVALDEBI']].rename(columns={'MCNVALDEBI': 'Egreso'})
                             df_egr = pd.concat([df_egr[['Dia', 'Dia_Semana', 'Categoria', 'Egreso']], df_g], ignore_index=True)
+                except: pass
+            
+            # Cargar auxiliar 25 (nómina) - solo EGRESOS y filtrar por caja específica
+            ruta_nomina = "local_cache/aux_nomina_25.xlsx"
+            if os.path.exists(ruta_nomina):
+                try:
+                    df_nom = pd.read_excel(ruta_nomina)
+                    df_nom.columns = df_nom.columns.str.strip().str.upper()
+                    
+                    if 'MCNTIPODOC' in df_nom.columns:
+                        df_nom = df_nom[df_nom['MCNTIPODOC'].astype(str).str.upper().str.strip() == 'EGRESOS']
+                    
+                    if 'MCNVALDEBI' in df_nom.columns and 'MCNFECHA' in df_nom.columns:
+                        df_nom['MCNVALDEBI'] = pd.to_numeric(df_nom['MCNVALDEBI'], errors='coerce').fillna(0)
+                        df_nom = df_nom[df_nom['MCNVALDEBI'] > 0].copy()
+                        df_nom['Fecha'] = pd.to_datetime(df_nom['MCNFECHA'], errors='coerce')
+                        df_nom = df_nom.dropna(subset=['Fecha'])
+                        df_nom['Dia'] = df_nom['Fecha'].dt.day
+                        df_nom['Dia_Semana'] = df_nom['Fecha'].dt.dayofweek
+                        
+                        if 'MCNCUENTA' in df_nom.columns:
+                            df_nom['CCO_Clean'] = df_nom['MCNCUENTA'].astype(str).str.extract(r'(\d{5})', expand=False)
+                            mapeo_cajas_inv = {v: k for k, v in mapeo_cajas.items()}
+                            df_nom['Categoria_CC'] = df_nom['CCO_Clean'].apply(lambda x: mapeo_cajas_inv.get(x, "OTRAS CAJAS") if x else "OTRAS CAJAS")
+                        else:
+                            df_nom['Categoria_CC'] = "Nómina"
+                        
+                        # Filtrar solo la caja seleccionada
+                        df_nom = df_nom[df_nom['Categoria_CC'].str.upper() == caja_str].copy()
+                        
+                        if not df_nom.empty:
+                            df_nom['Categoria'] = "Nómina"
+                            df_nom = df_nom[['Dia', 'Dia_Semana', 'Categoria', 'MCNVALDEBI']].rename(columns={'MCNVALDEBI': 'Egreso'})
+                            df_egr = pd.concat([df_egr, df_nom], ignore_index=True)
                 except: pass
 
         if df_egr.empty:

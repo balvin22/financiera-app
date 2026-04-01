@@ -96,14 +96,30 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
 
     # --- NUEVO: MOTOR DE EXTRACCIÓN NÓMINA (AUX 25) ---
     total_nomina = 0.0
+    detalle_nomina_cajas = []
     ruta_aux_nomina = "local_cache/aux_nomina_25.xlsx"
     if os.path.exists(ruta_aux_nomina):
         try:
             df_nomina = pd.read_excel(ruta_aux_nomina)
             df_nomina.columns = df_nomina.columns.str.strip().str.upper()
+            
+            # Filtrar solo EGRESOS
+            if 'MCNTIPODOC' in df_nomina.columns:
+                df_nomina = df_nomina[df_nomina['MCNTIPODOC'].astype(str).str.upper().str.strip() == 'EGRESOS']
+            
             if 'MCNVALDEBI' in df_nomina.columns:
                 df_nomina['MCNVALDEBI'] = pd.to_numeric(df_nomina['MCNVALDEBI'], errors='coerce').fillna(0)
                 total_nomina = float(df_nomina['MCNVALDEBI'].sum())
+                
+                # Agrupar por centro de costo (caja)
+                if 'MCNCUENTA' in df_nomina.columns:
+                    df_nomina['CCO_Clean'] = df_nomina['MCNCUENTA'].astype(str).str.extract(r'(\d{5})', expand=False)
+                    nomina_por_caja = df_nomina.groupby('CCO_Clean')['MCNVALDEBI'].sum()
+                    mapeo_cajas_inv = {v: k for k, v in MAPEO_CAJAS_BD.items()}
+                    for cco, valor in nomina_por_caja.items():
+                        if valor > 0:
+                            nombre_caja = mapeo_cajas_inv.get(cco, cco)
+                            detalle_nomina_cajas.append({"Concepto": f"   > C.C: {nombre_caja.title()}", "Valor": float(valor)})
         except Exception as e:
             print(f"Advertencia: No se procesó aux_nomina_25.xlsx - {e}")
 
@@ -225,6 +241,14 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
     estructura_resumen.extend([
         {"Concepto": "", "Valor": None},
         {"Concepto": "PAGO DE NÓMINA Y PRESTACIONES (AUX 25)", "Valor": total_nomina} if total_nomina > 0 else None,
+    ])
+    
+    # Agregar detalle de nómina por caja
+    if detalle_nomina_cajas:
+        for item in detalle_nomina_cajas:
+            estructura_resumen.append(item)
+    
+    estructura_resumen.extend([
         {"Concepto": "", "Valor": None},
         {"Concepto": "SALIDAS POR GASTOS OPERACIONALES", "Valor": None},
     ])
