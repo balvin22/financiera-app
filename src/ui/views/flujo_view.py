@@ -2,11 +2,13 @@
 import flet as ft
 import time
 import os
-import shutil
-import polars as pl  
+import sys
+import subprocess
+import polars as pl
 from src.data_engine.reports.flujo_efectivo import GeneradorFlujoEfectivo
-from src.data_engine.extractors.alianza_pdf import AlianzaPdfExtractor
 from src.ui.components.tarjeta_banco import TarjetaBanco
+from src.utils.file_loader import FileLoader
+from src.utils.pdf_processor import PdfProcessor
 
 class FlujoView(ft.Container):
     def __init__(self, page: ft.Page):
@@ -16,15 +18,8 @@ class FlujoView(ft.Container):
         self.padding = 40
         self.bgcolor = "#F8FAFC" 
         
-        self.rutas_archivos = {
-            "bancolombia": None, "davivienda": None, "occidente": None,
-            "agrario": None, "alianza": None, "caja": None, "caja_bancos": None
-        }
-        self.banco_actual_picker = None
         self.tarjetas_bancos = {} 
-
-        self.acumulado_pdf_ingresos = 0.0
-        self.acumulado_pdf_egresos = 0.0
+        self.pdf_processor = PdfProcessor()
 
         # Pickers
         self.file_picker = ft.FilePicker(on_result=self.on_dialog_result)
@@ -45,9 +40,17 @@ class FlujoView(ft.Container):
         self.aux_prov_picker = ft.FilePicker(on_result=self.on_aux_prov_result)
         self.page.overlay.append(self.aux_prov_picker)
         
-        # --- NUEVO PICKER: Auxiliar Nómina 25 ---
         self.aux_nomina_picker = ft.FilePicker(on_result=self.on_aux_nomina_result)
         self.page.overlay.append(self.aux_nomina_picker)
+
+        # Estado interno
+        self.acumulado_pdf_ingresos = 0.0
+        self.acumulado_pdf_egresos = 0.0
+        self.rutas_archivos = {
+            "bancolombia": None, "davivienda": None, "occidente": None,
+            "agrario": None, "alianza": None, "caja": None, "caja_bancos": None
+        }
+        self.banco_actual_picker = None
 
         self.build_ui()
 
@@ -56,48 +59,55 @@ class FlujoView(ft.Container):
     # ==========================================
     def on_gastos_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            ruta_origen = e.files[0].path
-            os.makedirs("local_cache", exist_ok=True)
-            ruta_destino = "local_cache/gastos_2335.xlsx"
-            try:
-                shutil.copy(ruta_origen, ruta_destino)
-                self.page.snack_bar = ft.SnackBar(ft.Text("✅ Base 2335 (Gastos) cargada exitosamente."), bgcolor=ft.colors.GREEN_700)
-            except Exception as ex:
-                self.page.snack_bar = ft.SnackBar(ft.Text(f"❌ Error al cargar Base 2335: {str(ex)}"), bgcolor=ft.colors.RED_700)
-            self.page.snack_bar.open = True
-            self.page.update()
+            origen = e.files[0].path
+            exito = FileLoader.copy_to_cache(origen, "gastos_2335.xlsx")
+            self._mostrar_snack(
+                "✅ Base 2335 (Gastos) cargada exitosamente." if exito else "❌ Error al cargar Base 2335",
+                exito
+            )
 
     # ==========================================
-    # LÓGICA: CARGAR AUXILIAR PROVEEDORES 2205 (SUPPLY)
+    # LÓGICA: CARGAR AUXILIAR PROVEEDORES 2205
     # ==========================================
     def on_aux_prov_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            ruta_origen = e.files[0].path
-            os.makedirs("local_cache", exist_ok=True)
-            ruta_destino = "local_cache/aux_prov_2205.xlsx"
-            try:
-                shutil.copy(ruta_origen, ruta_destino)
-                self.page.snack_bar = ft.SnackBar(ft.Text("✅ Auxiliar Proveedores (2205) cargado para Supply."), bgcolor=ft.colors.GREEN_700)
-            except Exception as ex:
-                self.page.snack_bar = ft.SnackBar(ft.Text(f"❌ Error al cargar Auxiliar 2205: {str(ex)}"), bgcolor=ft.colors.RED_700)
-            self.page.snack_bar.open = True
-            self.page.update()
+            origen = e.files[0].path
+            exito = FileLoader.copy_to_cache(origen, "aux_prov_2205.xlsx")
+            self._mostrar_snack(
+                "✅ Auxiliar Proveedores (2205) cargado para Supply." if exito else "❌ Error al cargar Auxiliar 2205",
+                exito
+            )
 
     # ==========================================
-    # LÓGICA: CARGAR AUXILIAR NÓMINA 25 (NUEVO)
+    # LÓGICA: CARGAR AUXILIAR NÓMINA 25
     # ==========================================
     def on_aux_nomina_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            ruta_origen = e.files[0].path
-            os.makedirs("local_cache", exist_ok=True)
-            ruta_destino = "local_cache/aux_nomina_25.xlsx"
-            try:
-                shutil.copy(ruta_origen, ruta_destino)
-                self.page.snack_bar = ft.SnackBar(ft.Text("✅ Auxiliar Nómina (25) cargado exitosamente."), bgcolor=ft.colors.GREEN_700)
-            except Exception as ex:
-                self.page.snack_bar = ft.SnackBar(ft.Text(f"❌ Error al cargar Auxiliar 25: {str(ex)}"), bgcolor=ft.colors.RED_700)
-            self.page.snack_bar.open = True
-            self.page.update()
+            origen = e.files[0].path
+            exito = FileLoader.copy_to_cache(origen, "aux_nomina_25.xlsx")
+            self._mostrar_snack(
+                "✅ Auxiliar Nómina (25) cargado exitosamente." if exito else "❌ Error al cargar Auxiliar 25",
+                exito
+            )
+
+    def _mostrar_snack(self, mensaje: str, exitoso: bool):
+        self.page.snack_bar = ft.SnackBar(
+            ft.Text(mensaje), 
+            bgcolor=ft.colors.GREEN_700 if exitoso else ft.colors.RED_700
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+
+    def _abrir_archivo(self, ruta: str):
+        try:
+            if sys.platform == "win32":
+                os.startfile(ruta)
+            elif sys.platform == "darwin":
+                subprocess.run(["open", ruta], check=True)
+            else:
+                subprocess.run(["xdg-open", ruta], check=True)
+        except Exception:
+            pass
 
     # ==========================================
     # LÓGICA DE AUTO-COMPLETADO DE SALDOS
@@ -150,34 +160,24 @@ class FlujoView(ft.Container):
         
     def on_pdf_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            clave_pdf = "900333755" 
             es_perdida = self.switch_perdida.value
-            archivos_exitosos = 0
             
-            self.page.snack_bar = ft.SnackBar(ft.Text("Escaneando PDFs... por favor espera."), bgcolor=ft.colors.BLUE_700)
-            self.page.snack_bar.open = True
-            self.page.update()
+            self._mostrar_snack("Escaneando PDFs... por favor espera.", True)
             
-            for archivo in e.files:
-                extractor_pdf = AlianzaPdfExtractor(archivo.path, clave_pdf)
-                valores = extractor_pdf.extraer_valores()
-                if valores:
-                    if es_perdida: self.acumulado_pdf_ingresos -= valores['ingresos']
-                    else: self.acumulado_pdf_ingresos += valores['ingresos']
-                    self.acumulado_pdf_egresos += valores['egresos']
-                    archivos_exitosos += 1
-
-            if archivos_exitosos > 0:
-                self.texto_pdf_resumen_ingresos.value = f"$ {self.acumulado_pdf_ingresos:,.2f}"
-                self.texto_pdf_resumen_egresos.value = f"$ {self.acumulado_pdf_egresos:,.2f}"
-                estado_msj = "RESTADOS (Pérdida)" if es_perdida else "SUMADOS (Ganancia)"
-                self.page.snack_bar = ft.SnackBar(ft.Text(f"✅ {archivos_exitosos} PDF(s) procesados. Valores {estado_msj} en memoria."), bgcolor=ft.colors.GREEN_700)
+            rutas = [archivo.path for archivo in e.files]
+            resultado = self.pdf_processor.procesar_archivos(rutas, es_perdida)
+            self.acumulado_pdf_ingresos = resultado["ingresos"]
+            self.acumulado_pdf_egresos = resultado["egresos"]
+            
+            if resultado["archivos_procesados"] > 0:
+                self.texto_pdf_resumen_ingresos.value = self.pdf_processor.formatear_dinero(self.acumulado_pdf_ingresos)
+                self.texto_pdf_resumen_egresos.value = self.pdf_processor.formatear_dinero(self.acumulado_pdf_egresos)
+                estado_msj = self.pdf_processor.get_estado_mensaje(es_perdida)
+                self._mostrar_snack(f"✅ {resultado['archivos_procesados']} PDF(s) procesados. Valores {estado_msj} en memoria.", True)
             else:
-                self.page.snack_bar = ft.SnackBar(ft.Text("❌ Error leyendo los PDFs. Revisa la clave o el formato."), bgcolor=ft.colors.RED_700)
+                self._mostrar_snack("❌ Error leyendo los PDFs. Revisa la clave o el formato.", False)
             
             self.switch_perdida.value = False
-            self.page.snack_bar.open = True
-            self.page.update()
 
     def limpiar_escaneo_pdf(self, e):
         self.acumulado_pdf_ingresos = 0.0
@@ -242,7 +242,7 @@ class FlujoView(ft.Container):
             self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.GREEN_600, color=ft.colors.WHITE)
             self.page.update()
             
-            os.startfile(ruta_excel)
+            self._abrir_archivo(ruta_excel)
             
             time.sleep(2.5) 
             self.boton_generar.text = "Generar Reporte Excel"

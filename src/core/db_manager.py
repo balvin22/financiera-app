@@ -2,6 +2,9 @@
 import sqlite3
 import pandas as pd
 import os
+from src.core.logger import get_logger
+
+logger = get_logger("db_manager")
 
 DB_PATH = "local_cache/maestros.db"
 
@@ -77,5 +80,5 @@ class DBManager:
                             self.insert_or_update(tabla, codigo, nombre)
             return True
         except Exception as e:
-            print(f"Error importando: {e}")
+            logger.error(f"Error importando: {e}")
             return False

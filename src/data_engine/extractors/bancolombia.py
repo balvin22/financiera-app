@@ -1,7 +1,10 @@
 # src.data_engine/extractors/bancolombia.py
 import polars as pl
 import openpyxl
+import logging
 from .base import BaseExtractor
+
+logger = logging.getLogger("bancolombia_extractor")
 
 class BancolombiaExtractor(BaseExtractor):
     def process(self) -> pl.DataFrame:
@@ -76,36 +79,5 @@ class BancolombiaExtractor(BaseExtractor):
             return df_final
             
         except Exception as e:
-            print(f"Error procesando Bancolombia ({self.filepath}): {e}")
+            logger.error(f"Error procesando Bancolombia ({self.filepath}): {e}")
             return pl.DataFrame()
-        
-# Zona de Pruebas
-if __name__ == "__main__":
-    ruta_prueba = "c:/Users/usuario/Desktop/Financiera/1. Mov Bancolombia mes de Noviembre ARP.xlsx"
-    
-    extractor = BancolombiaExtractor(ruta_prueba)
-    resultado = extractor.process()
-    
-    if not resultado.is_empty():
-        print("--- Validación de Cálculos Hoja 'Din' ---")
-        
-        # Ingresos
-        ingresos_totales = resultado["Ingreso"].sum()
-        traslados_entrada = resultado.filter(pl.col("Categoria_Flujo") == "Traslado_Entrada")["Ingreso"].sum()
-        ingresos_operativos = ingresos_totales - traslados_entrada
-        
-        # Egresos
-        egresos_totales = resultado["Egreso"].sum()
-        traslados_salida = resultado.filter(pl.col("Categoria_Flujo") == "Traslado_Salida")["Egreso"].sum()
-        egresos_operativos = egresos_totales - traslados_salida
-        
-        print(f"Ingresos Totales (Crudos): {ingresos_totales:,.2f}")
-        print(f"  - Menos Traslados (Alianza): {traslados_entrada:,.2f}")
-        print(f"  = Ingreso Operativo Real: {ingresos_operativos:,.2f}  <-- ¡Cuadra con la línea BANCOLOMBIA de la hoja Din!\n")
-        
-        print(f"Egresos Totales (Crudos): {egresos_totales:,.2f}")
-        print(f"  - Menos Traslados (Fondos): {traslados_salida:,.2f}")
-        print(f"  = Egreso Operativo Real: {egresos_operativos:,.2f} <-- ¡Cuadra con la línea BANCOLOMBIA de la hoja Din!\n")
-        
-        # Nota sobre Saldos
-        print("Nota: Los saldos inicial (19M) y final (123M) se ingresarán al final del proceso global en el módulo de Consolidación.")

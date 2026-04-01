@@ -3,12 +3,12 @@ import flet as ft
 import polars as pl
 import os
 import traceback
-
 from src.ui.components.kpi_card import crear_tarjeta_kpi, crear_tarjeta_kpi_compuesta
 from src.ui.components.grafico_ingresos import GraficoIngresos
 from src.ui.components.grafico_egresos import GraficoEgresos
 from src.ui.components.tendencia_ingresos import TendenciaIngresos
 from src.ui.components.tendencia_egresos import TendenciaEgresos
+from src.utils.data_loader import DataLoader
 
 class DashboardView(ft.Container):
     def __init__(self, page: ft.Page):
@@ -28,7 +28,7 @@ class DashboardView(ft.Container):
                 self.update()
 
     def build_ui(self):
-        if not os.path.exists("local_cache/base_detallada.parquet") or not os.path.exists("local_cache/base_resumen.parquet"):
+        if not DataLoader.has_data():
             self.content = ft.Column([
                 ft.Icon(ft.icons.INSERT_CHART_OUTLINED, size=80, color=ft.colors.BLUE_200),
                 ft.Text("Faltan datos para el Dashboard", size=24, weight=ft.FontWeight.BOLD, color=ft.colors.BLUE_900),
@@ -37,19 +37,13 @@ class DashboardView(ft.Container):
             return
 
         try:
-            df_res = pl.read_parquet("local_cache/base_resumen.parquet").to_pandas()
+            df_resumen = DataLoader.load_parquet("base_resumen").to_pandas()
+            valores = DataLoader.get_resumen_values(df_resumen)
 
-            def obtener_valor(concepto_str):
-                try:
-                    vals = df_res.loc[df_res['Concepto'] == concepto_str, 'Valor'].dropna().values
-                    return float(vals[0]) if len(vals) > 0 else 0.0
-                except:
-                    return 0.0
-
-            ingresos_mes = obtener_valor("Total Ingresos del mes")
-            saldo_inicial = obtener_valor("Saldo inicial del mes anterior")
-            total_disponible = obtener_valor("Total Disponible")
-            total_salidas = obtener_valor("Total salidas del mes")
+            ingresos_mes = valores["ingresos_mes"]
+            saldo_inicial = valores["saldo_inicial"]
+            total_disponible = valores["total_disponible"]
+            total_salidas = valores["total_salidas"]
             saldo_final_neto = total_disponible - total_salidas
 
             fila_kpis = ft.Row([
