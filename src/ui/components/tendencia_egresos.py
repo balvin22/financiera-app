@@ -1,4 +1,4 @@
-# ui/components/tendencia_egresos.py
+# src/ui/components/tendencia_egresos.py
 import flet as ft
 import polars as pl
 import pandas as pd
@@ -23,6 +23,7 @@ class TendenciaEgresos(ft.Container):
 
         self.modo_vista = "ENTIDADES"
         self.nivel_actual = "GENERAL"
+        self.caja_seleccionada = None
         self.categorias_activas = []
         self.datos_diarios = {}
         self.proveedores_activos = []
@@ -31,7 +32,7 @@ class TendenciaEgresos(ft.Container):
 
         self.btn_entidades = ft.TextButton("Entidades", on_click=lambda e: self.set_modo("ENTIDADES"))
         self.btn_proveedores = ft.TextButton("Proveedores", on_click=lambda e: self.set_modo("PROVEEDORES"))
-        self.btn_gastos = ft.TextButton("Gastos (2335)", on_click=lambda e: self.set_modo("GASTOS")) # NUEVO BOTON
+        self.btn_gastos = ft.TextButton("Gastos (2335)", on_click=lambda e: self.set_modo("GASTOS")) 
 
         self.contenedor_tabs = ft.Row([self.btn_entidades, self.btn_proveedores, self.btn_gastos], spacing=0)
 
@@ -89,11 +90,12 @@ class TendenciaEgresos(ft.Container):
             self.card_total.data.value = f"$ {total_sum:,.2f}"
             self.card_promedio.data.value = f"$ {promedio:,.2f}"
             self.card_maximo.data.value = f"$ {maximo:,.2f}"
-            self.card_mayor.data.value = mayor_cat[:15]
+            self.card_mayor.data.value = mayor_cat[:15].title()
         except: pass
 
     def get_color_ft(self, idx: int, cat: str = ""):
-        if self.modo_vista == "ENTIDADES": return obtener_color(cat, modo="ENTIDADES", nivel=self.nivel_actual)
+        if self.nivel_actual == "DETALLE_CAJA": return obtener_color_proveedor(cat, idx)
+        elif self.modo_vista == "ENTIDADES": return obtener_color(cat, modo="ENTIDADES", nivel=self.nivel_actual)
         else: return obtener_color_proveedor(cat, idx)
 
     def _construir_ui(self):
@@ -109,12 +111,14 @@ class TendenciaEgresos(ft.Container):
     def set_modo(self, modo: str):
         self.modo_vista = modo
         self.nivel_actual = "GENERAL"
+        self.caja_seleccionada = None
         self.extraer_datos()
         self.dibujar_grafico("ALL")
         if self.page: self.update()
 
-    def set_nivel(self, nuevo_nivel: str):
+    def set_nivel(self, nuevo_nivel: str, caja_sel: str = None):
         self.nivel_actual = nuevo_nivel
+        self.caja_seleccionada = caja_sel
         self.extraer_datos()
         self.dibujar_grafico(self.dropdown_dias.value)
         if self.page: self.update()
@@ -142,24 +146,33 @@ class TendenciaEgresos(ft.Container):
         except: pass
 
     def _extraer_gastos_2335(self, dias_cortos, dias_completos):
+        # Mapeo a nivel general de gastos (esta funcion no cambió)
         ruta_gastos = "local_cache/gastos_2335.xlsx"
         db_path = "local_cache/maestros.db"
         if not os.path.exists(ruta_gastos) or not os.path.exists(db_path):
             self.categorias_activas, self.datos_diarios = [], {}
             return
 
-        mapeo_docs = {}
-        try:
-            with sqlite3.connect(db_path) as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT recauda, docs FROM centros_costos")
-                for row in cursor.fetchall():
-                    recauda = str(row[0]).strip().upper()
-                    docs = str(row[1]).strip().upper()
-                    if docs and docs not in ["", "NONE", "NAN"]:
-                        for p in docs.replace(" ", "").replace("-", ",").split(","):
-                            if p: mapeo_docs[p] = recauda
-        except: pass
+        mapping_numero_caja = {}
+        if os.path.exists("local_cache/base_global.parquet"):
+            try:
+                df_global = pl.read_parquet("local_cache/base_global.parquet").to_pandas()
+                df_caja = df_global[(df_global['Origen'].str.upper() == 'CAJA')].copy()
+                mapeo_cajas = {}
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT codigo, recauda FROM centros_costos")
+                    for r in cursor.fetchall():
+                        if str(r[1]).strip(): mapeo_cajas[str(r[0]).strip()] = str(r[1]).strip().upper()
+                df_caja['CCO_Clean'] = df_caja['NOMBRE_CCO'].astype(str).str.extract(r'(\d{5})', expand=False)
+                df_caja['Caja_Real'] = df_caja['CCO_Clean'].map(mapeo_cajas).fillna(df_caja['NOMBRE_CCO']).str.upper()
+                
+                if 'Numero_Doc' in df_caja.columns:
+                    for _, row in df_caja.iterrows():
+                        num = str(row['Numero_Doc']).strip().replace(".0", "")
+                        if num and num != "NAN":
+                            mapping_numero_caja[num] = str(row['Caja_Real']).upper()
+            except: pass
 
         df = pd.read_excel(ruta_gastos)
         df.columns = df.columns.str.strip().str.upper()
@@ -173,9 +186,9 @@ class TendenciaEgresos(ft.Container):
         df_pagos['Dia'] = df_pagos['Fecha'].dt.day
         df_pagos['Dia_Semana'] = df_pagos['Fecha'].dt.dayofweek
 
-        col_doc = 'MCNTIPODOC' if 'MCNTIPODOC' in df_pagos.columns else None
-        if col_doc:
-            df_pagos['Categoria'] = df_pagos[col_doc].apply(lambda x: mapeo_docs.get(str(x).strip().upper(), "OTRAS CAJAS/BANCOS"))
+        if 'MCNNUMEDOC' in df_pagos.columns:
+            df_pagos['MCNNUMEDOC_str'] = df_pagos['MCNNUMEDOC'].astype(str).str.strip().str.replace(".0", "", regex=False)
+            df_pagos['Categoria'] = df_pagos['MCNNUMEDOC_str'].apply(lambda x: mapping_numero_caja.get(x, "OTRAS CAJAS/BANCOS"))
         else:
             df_pagos['Categoria'] = "General"
 
@@ -197,21 +210,115 @@ class TendenciaEgresos(ft.Container):
         self._construir_leyenda()
 
     def _extraer_entidades(self, df, dias_cortos, dias_completos):
+        db_path = "local_cache/maestros.db"
+        mapeo_cajas, dict_cuentas_2335, prov_lista = {}, {}, set()
+        if os.path.exists(db_path):
+            try:
+                with sqlite3.connect(db_path) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT codigo, nombre FROM proveedores")
+                    for r in cursor.fetchall(): prov_lista.add(str(r[1]).strip().upper())
+                    cursor.execute("SELECT codigo, nombre FROM cuentas_2335")
+                    for r in cursor.fetchall(): dict_cuentas_2335[str(r[0]).strip()] = str(r[1]).strip().title()
+                    cursor.execute("SELECT codigo, recauda FROM centros_costos")
+                    for r in cursor.fetchall():
+                        c, rec = str(r[0]).strip(), str(r[1]).strip().upper()
+                        if rec: mapeo_cajas[c] = rec
+            except: pass
+
         df_egr = df[df["Egreso"] > 0].copy()
-        if self.nivel_actual == "GENERAL":
+        df_egr['CCO_Clean'] = df_egr['NOMBRE_CCO'].astype(str).str.extract(r'(\d{5})', expand=False)
+        df_egr['Caja_Real'] = df_egr['CCO_Clean'].map(mapeo_cajas).fillna(df_egr['NOMBRE_CCO']).str.upper()
+
+        if self.nivel_actual == "GENERAL": 
             df_egr["Categoria"] = df_egr["Origen"].apply(lambda x: "Caja" if str(x).strip().upper() == "CAJA" else "Bancos")
         elif self.nivel_actual == "BANCOS":
             df_egr = df_egr[df_egr["Origen"].str.strip().str.upper() != "CAJA"].copy()
             df_egr["Categoria"] = df_egr["Origen"].str.capitalize()
         elif self.nivel_actual == "CAJA":
             df_egr = df_egr[df_egr["Origen"].str.strip().str.upper() == "CAJA"].copy()
-            df_egr["CCO_Clean"] = df_egr["NOMBRE_CCO"].astype(str).str.extract(r"(\d{5})", expand=False)
-            from src.core.mapeos import MAPEO_CAJAS_TITULO
-            df_egr["Categoria"] = df_egr["CCO_Clean"].map(MAPEO_CAJAS_TITULO).fillna(df_egr["NOMBRE_CCO"]).str.title()
+            df_egr["Categoria"] = df_egr["Caja_Real"]
+            
+            ruta_gastos = "local_cache/gastos_2335.xlsx"
+            if os.path.exists(ruta_gastos):
+                try:
+                    df_g = pd.read_excel(ruta_gastos)
+                    df_g.columns = df_g.columns.str.strip().str.upper()
+                    if 'MCNVALDEBI' in df_g.columns and 'MCNFECHA' in df_g.columns and 'MCNNUMEDOC' in df_g.columns:
+                        df_g['MCNVALDEBI'] = pd.to_numeric(df_g['MCNVALDEBI'], errors='coerce').fillna(0)
+                        df_g = df_g[df_g['MCNVALDEBI'] > 0].copy()
+                        df_g['Fecha'] = pd.to_datetime(df_g['MCNFECHA'], errors='coerce')
+                        df_g = df_g.dropna(subset=['Fecha'])
+                        df_g['Dia'] = df_g['Fecha'].dt.day
+                        df_g['Dia_Semana'] = df_g['Fecha'].dt.dayofweek
+                        
+                        mapping_numero_caja = {}
+                        if 'Numero_Doc' in df_egr.columns:
+                            for _, row in df_egr.iterrows():
+                                num = str(row['Numero_Doc']).strip().replace(".0", "")
+                                if num and num != "NAN":
+                                    mapping_numero_caja[num] = str(row['Caja_Real']).upper()
+                                    
+                        df_g['MCNNUMEDOC_str'] = df_g['MCNNUMEDOC'].astype(str).str.strip().str.replace(".0", "", regex=False)
+                        df_g['Categoria'] = df_g['MCNNUMEDOC_str'].apply(lambda x: mapping_numero_caja.get(x, "OTRAS CAJAS"))
+                        
+                        df_g = df_g[['Dia', 'Dia_Semana', 'Categoria', 'MCNVALDEBI']].rename(columns={'MCNVALDEBI': 'Egreso'})
+                        df_egr = pd.concat([df_egr[['Dia', 'Dia_Semana', 'Categoria', 'Egreso']], df_g], ignore_index=True)
+                except: pass
+
+        elif self.nivel_actual == "DETALLE_CAJA" and self.caja_seleccionada:
+            caja_str = str(self.caja_seleccionada).upper()
+            df_egr = df_egr[(df_egr["Origen"].str.strip().str.upper() == "CAJA") & (df_egr["Caja_Real"] == caja_str)].copy()
+            df_egr["Categoria"] = df_egr["Tercero"].apply(lambda x: "Proveedores" if str(x).strip().upper() in prov_lista else "Otros Gastos")
+            
+            ruta_gastos = "local_cache/gastos_2335.xlsx"
+            if os.path.exists(ruta_gastos):
+                try:
+                    df_g = pd.read_excel(ruta_gastos)
+                    df_g.columns = df_g.columns.str.strip().str.upper()
+                    if 'MCNVALDEBI' in df_g.columns and 'MCNFECHA' in df_g.columns and 'MCNNUMEDOC' in df_g.columns:
+                        df_g['MCNVALDEBI'] = pd.to_numeric(df_g['MCNVALDEBI'], errors='coerce').fillna(0)
+                        df_g = df_g[df_g['MCNVALDEBI'] > 0].copy()
+                        
+                        mapping_numero_caja = {}
+                        if 'Numero_Doc' in df_egr.columns:
+                            for _, row in df_egr.iterrows():
+                                num = str(row['Numero_Doc']).strip().replace(".0", "")
+                                if num and num != "NAN":
+                                    mapping_numero_caja[num] = str(row['Caja_Real']).upper()
+                                    
+                        df_g['MCNNUMEDOC_str'] = df_g['MCNNUMEDOC'].astype(str).str.strip().str.replace(".0", "", regex=False)
+                        df_g['Origen_Caja'] = df_g['MCNNUMEDOC_str'].apply(lambda x: mapping_numero_caja.get(x, "OTRO"))
+                        
+                        df_g = df_g[df_g['Origen_Caja'] == caja_str].copy()
+                        if not df_g.empty:
+                            df_g['Fecha'] = pd.to_datetime(df_g['MCNFECHA'], errors='coerce')
+                            df_g = df_g.dropna(subset=['Fecha'])
+                            df_g['Dia'] = df_g['Fecha'].dt.day
+                            df_g['Dia_Semana'] = df_g['Fecha'].dt.dayofweek
+                            
+                            def mapear_cuenta(codigo):
+                                cod_str = str(codigo).strip()
+                                if cod_str.endswith(".0"): cod_str = cod_str[:-2]
+                                if cod_str in dict_cuentas_2335: return dict_cuentas_2335[cod_str]
+                                if len(cod_str) >= 6:
+                                    raiz = cod_str[:6]
+                                    for c_bd, n_bd in dict_cuentas_2335.items():
+                                        if str(c_bd).startswith(raiz): return n_bd
+                                return "Gastos Operacionales"
+
+                            df_g['Categoria'] = df_g['MCNCUENTA'].apply(mapear_cuenta)
+                            df_g = df_g[['Dia', 'Dia_Semana', 'Categoria', 'MCNVALDEBI']].rename(columns={'MCNVALDEBI': 'Egreso'})
+                            df_egr = pd.concat([df_egr[['Dia', 'Dia_Semana', 'Categoria', 'Egreso']], df_g], ignore_index=True)
+                except: pass
+
+        if df_egr.empty:
+            self.categorias_activas, self.datos_diarios = [], {}
+            return
 
         agrupado = df_egr.groupby(["Dia", "Categoria"]).agg({"Egreso": "sum", "Dia_Semana": "first"}).reset_index()
         totales_cat = agrupado.groupby("Categoria")["Egreso"].sum().sort_values(ascending=False)
-        self.categorias_activas = totales_cat.index.tolist()
+        self.categorias_activas = totales_cat.head(10).index.tolist()
 
         opciones = [ft.dropdown.Option(key="ALL", text="Todo el mes")]
         self.datos_diarios = {}

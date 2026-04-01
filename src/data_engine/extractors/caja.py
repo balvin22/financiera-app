@@ -1,4 +1,4 @@
-# src.data_engine/extractors/caja.py
+# src/data_engine/extractors/caja.py
 import polars as pl
 import pandas as pd
 from .base import BaseExtractor
@@ -17,6 +17,12 @@ class CajaExtractor(BaseExtractor):
             # Aseguramos que la columna TIPO (nuestra llave principal) sea texto
             if "TIPO" in pdf.columns:
                 pdf["TIPO"] = pdf["TIPO"].astype(str).str.strip().str.upper()
+                
+            # --- LA MAGIA: Limpiamos la columna NUMERO ---
+            if "NUMERO" in pdf.columns:
+                pdf["NUMERO"] = pdf["NUMERO"].astype(str).str.strip().str.replace(".0", "", regex=False)
+            else:
+                pdf["NUMERO"] = ""
                 
             # 2. Pasamos a Polars
             df = pl.from_pandas(pdf)
@@ -37,17 +43,13 @@ class CajaExtractor(BaseExtractor):
                     pl.col("FECHA").cast(pl.Date, strict=False).alias("Fecha"),
                     pl.col("DETALLE").cast(pl.Utf8).alias("Concepto"),
                     pl.col("TIPO").cast(pl.Utf8).alias("Documento_Referencia"),
-                    
                     pl.col("DEBITO").cast(pl.Float64, strict=False).fill_null(0.0).alias("Ingreso"),
                     pl.col("CREDITO").cast(pl.Float64, strict=False).fill_null(0.0).alias("Egreso"),
-                    
-                    # ATRAPAMOS EL TERCERO
                     pl.col("NOMBRE").cast(pl.Utf8, strict=False).fill_null("SIN TERCERO").alias("Tercero"),
+                    pl.col("CCOSTO").cast(pl.Utf8, strict=False).fill_null("N/A").alias("NOMBRE_CCO"),
                     
-                    # === EL CAMBIO CLAVE ===
-                    # Tomamos el número de CCOSTO, lo convertimos a texto y lo llamamos NOMBRE_CCO
-                    # Así engañamos al sistema para que le pase los números al diccionario traductor
-                    pl.col("CCOSTO").cast(pl.Utf8, strict=False).fill_null("N/A").alias("NOMBRE_CCO")
+                    # --- AQUÍ ATRAPAMOS EL NÚMERO ---
+                    pl.col("NUMERO").cast(pl.Utf8, strict=False).fill_null("").alias("Numero_Doc")
                 ])
                 .with_columns(pl.lit("CAJA").alias("Origen"))
                 .filter(pl.col("Fecha").is_not_null())
@@ -70,4 +72,4 @@ class CajaExtractor(BaseExtractor):
             
         except Exception as e:
             print(f"Error procesando Caja ({self.filepath}): {e}")
-            return pl.DataFrame({"Fecha": [], "Concepto": [], "Documento_Referencia": [], "Ingreso": [], "Egreso": [], "Origen": [], "Categoria_Flujo": [], "Tercero": [], "NOMBRE_CCO": []})
+            return pl.DataFrame({"Fecha": [], "Concepto": [], "Documento_Referencia": [], "Ingreso": [], "Egreso": [], "Origen": [], "Categoria_Flujo": [], "Tercero": [], "NOMBRE_CCO": [], "Numero_Doc": []})
