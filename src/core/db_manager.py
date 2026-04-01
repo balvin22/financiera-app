@@ -3,6 +3,7 @@ import sqlite3
 import pandas as pd
 import os
 from src.core.logger import get_logger
+from datetime import datetime
 
 logger = get_logger("db_manager")
 
@@ -21,12 +22,21 @@ class DBManager:
             cursor.execute('''CREATE TABLE IF NOT EXISTS proveedores (codigo TEXT PRIMARY KEY, nombre TEXT)''')
             cursor.execute('''CREATE TABLE IF NOT EXISTS bancos (codigo TEXT PRIMARY KEY, nombre TEXT)''')
             
-            # ¡CORREGIDO! Ya no borramos la tabla, solo la creamos si no existe
             cursor.execute('''CREATE TABLE IF NOT EXISTS centros_costos (
                                 codigo TEXT PRIMARY KEY,
                                 nombre TEXT,
                                 recauda TEXT,
                                 docs TEXT)''')
+            
+            cursor.execute('''CREATE TABLE IF NOT EXISTS flujos_diarios (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                fecha TEXT,
+                                banco TEXT,
+                                ingresos REAL,
+                                egresos REAL,
+                                created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+            cursor.execute('''CREATE INDEX IF NOT EXISTS idx_flujos_diarios_fecha ON flujos_diarios(fecha)''')
+            cursor.execute('''CREATE INDEX IF NOT EXISTS idx_flujos_diarios_banco ON flujos_diarios(banco)''')
             conn.commit()
 
     def get_all(self, tabla: str):
@@ -82,3 +92,61 @@ class DBManager:
         except Exception as e:
             logger.error(f"Error importando: {e}")
             return False
+
+    def guardar_flujo_diario(self, fecha: str, banco: str, ingresos: float, egresos: float):
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                INSERT INTO flujos_diarios (fecha, banco, ingresos, egresos)
+                VALUES (?, ?, ?, ?)
+            ''', (fecha, banco, ingresos, egresos))
+            conn.commit()
+
+    def get_flujos_diarios(self, fecha_inicio: str = None, fecha_fin: str = None, banco: str = None):
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            query = "SELECT fecha, banco, ingresos, egresos FROM flujos_diarios WHERE 1=1"
+            params = []
+            
+            if fecha_inicio:
+                query += " AND fecha >= ?"
+                params.append(fecha_inicio)
+            if fecha_fin:
+                query += " AND fecha <= ?"
+                params.append(fecha_fin)
+            if banco:
+                query += " AND banco = ?"
+                params.append(banco)
+            
+            query += " ORDER BY fecha DESC, banco ASC"
+            cursor.execute(query, params)
+            return cursor.fetchall()
+
+    def get_fechas_disponibles(self):
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT fecha FROM flujos_diarios ORDER BY fecha DESC")
+            return [row[0] for row in cursor.fetchall()]
+
+    def get_bancos_disponibles(self):
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT banco FROM flujos_diarios ORDER BY banco ASC")
+            return [row[0] for row in cursor.fetchall()]
+
+    def get_totales_por_fecha(self):
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute('''
+                SELECT fecha, SUM(ingresos) as total_ingresos, SUM(egresos) as total_egresos
+                FROM flujos_diarios
+                GROUP BY fecha
+                ORDER BY fecha DESC
+            ''')
+            return cursor.fetchall()
+
+    def eliminar_flujo_fecha(self, fecha: str):
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM flujos_diarios WHERE fecha = ?", (fecha,))
+            conn.commit()

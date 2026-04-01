@@ -2,7 +2,8 @@
 import flet as ft
 from src.ui.views.flujo_view import FlujoView
 from src.ui.views.dashboard_view import DashboardView
-from src.ui.views.maestros_view import MaestrosView # <-- NUEVO: Importamos la vista
+from src.ui.views.maestros_view import MaestrosView
+from src.ui.views.flujo_diario_graficos import FlujoDiarioGraficos
 
 def build_main_window(page: ft.Page):
     page.title = "Consolidador Financiero - Flujo de Efectivo"
@@ -11,37 +12,37 @@ def build_main_window(page: ft.Page):
     page.window_width = 1280 
     page.window_height = 800
 
-    # 1. INSTANCIAMOS LAS VISTAS
     vista_flujo = FlujoView(page)
     vista_dashboard = DashboardView(page)
-    vista_maestros = MaestrosView(page) # <-- NUEVO: Instanciamos la vista de bases de datos
+    vista_maestros = MaestrosView(page)
+    vista_graficos_diarios = FlujoDiarioGraficos(page)
     
-    # 2. CONTENEDOR DINÁMICO (Aquí cambiaremos qué se muestra)
     area_trabajo = ft.Container(content=vista_flujo, expand=True)
 
-    # 3. LÓGICA DE NAVEGACIÓN
     def cambiar_vista(e):
         destino = e.control.data
         if destino == "generador":
             area_trabajo.content = vista_flujo
         elif destino == "dashboard":
-            vista_dashboard.build_ui() # Recarga los datos al entrar
+            vista_dashboard.build_ui()
             area_trabajo.content = vista_dashboard
-        elif destino == "maestros": # <-- NUEVO: Enrutamiento
-            vista_maestros.cargar_datos() # Refresca la tabla por si hubo cambios
+        elif destino == "maestros":
+            vista_maestros.cargar_datos()
             area_trabajo.content = vista_maestros
+        elif destino == "graficos_diarios":
+            vista_graficos_diarios.build_ui()
+            area_trabajo.content = vista_graficos_diarios
         
-        # Efecto visual de selección en el menú
         btn_gen.bgcolor = ft.colors.BLUE_800 if destino == "generador" else ft.colors.TRANSPARENT
         btn_dash.bgcolor = ft.colors.BLUE_800 if destino == "dashboard" else ft.colors.TRANSPARENT
-        btn_maestros.bgcolor = ft.colors.BLUE_800 if destino == "maestros" else ft.colors.TRANSPARENT # <-- NUEVO
+        btn_maestros.bgcolor = ft.colors.BLUE_800 if destino == "maestros" else ft.colors.TRANSPARENT
+        btn_graficos_dia.bgcolor = ft.colors.BLUE_800 if destino == "graficos_diarios" else ft.colors.TRANSPARENT
         page.update()
 
-    # BOTONES DE MENÚ
     btn_gen = ft.ListTile(
         leading=ft.Icon(ft.icons.ACCOUNT_TREE, color=ft.colors.WHITE),
         title=ft.Text("Generador de Reportes", color=ft.colors.WHITE, weight=ft.FontWeight.BOLD),
-        bgcolor=ft.colors.BLUE_800, # Activo por defecto
+        bgcolor=ft.colors.BLUE_800,
         hover_color=ft.colors.BLUE_700,
         data="generador", on_click=cambiar_vista
     )
@@ -54,7 +55,6 @@ def build_main_window(page: ft.Page):
         data="dashboard", on_click=cambiar_vista
     )
 
-    # <-- NUEVO: Botón de Bases Maestras -->
     btn_maestros = ft.ListTile(
         leading=ft.Icon(ft.icons.STORAGE, color=ft.colors.WHITE),
         title=ft.Text("Bases Maestras", color=ft.colors.WHITE, weight=ft.FontWeight.BOLD),
@@ -63,7 +63,14 @@ def build_main_window(page: ft.Page):
         data="maestros", on_click=cambiar_vista
     )
 
-    # PANEL LATERAL
+    btn_graficos_dia = ft.ListTile(
+        leading=ft.Icon(ft.icons.SHOW_CHART, color=ft.colors.WHITE),
+        title=ft.Text("Gráficos Diarios", color=ft.colors.WHITE, weight=ft.FontWeight.BOLD),
+        bgcolor=ft.colors.TRANSPARENT,
+        hover_color=ft.colors.BLUE_700,
+        data="graficos_diarios", on_click=cambiar_vista
+    )
+
     sidebar = ft.Container(
         width=300, bgcolor=ft.colors.BLUE_GREY_900,
         padding=ft.padding.only(top=35, left=20, right=20, bottom=25),
@@ -78,7 +85,8 @@ def build_main_window(page: ft.Page):
             ft.Container(height=5),
             btn_gen,
             btn_dash,
-            btn_maestros, # <-- NUEVO: Agregado a la columna del menú
+            btn_maestros,
+            btn_graficos_dia,
             
             ft.Container(expand=True),
             ft.Divider(height=20, color=ft.colors.BLUE_GREY_700),
@@ -89,6 +97,5 @@ def build_main_window(page: ft.Page):
         ])
     )
 
-    # ARMAMOS LA PANTALLA
     layout = ft.Row([sidebar, area_trabajo], expand=True, spacing=0)
     page.add(layout)

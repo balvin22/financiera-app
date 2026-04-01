@@ -347,7 +347,7 @@ class TendenciaEgresos(ft.Container):
                         elif 'Prov Banco:' in conc: provedores_banco.add(conc.replace('   > Prov Banco: ', '').strip().upper())
                 
                 if provedores_caja or provedores_banco:
-                    df_egr = df[df["Egreso"] > 0].copy()
+                    df_egr = df[(df["Egreso"] > 0) & (~df["Categoria_Flujo"].isin(["Traslado_Salida", "Traslado_Entrada"]))].copy()
                     df_egr["EsProvCaja"] = df_egr["Tercero"].apply(lambda x: str(x).strip().upper() in provedores_caja if pd.notna(x) else False)
                     df_egr["EsProvBanco"] = df_egr["Tercero"].apply(lambda x: str(x).strip().upper() in provedores_banco if pd.notna(x) else False)
                     
@@ -378,7 +378,7 @@ class TendenciaEgresos(ft.Container):
                 self._construir_leyenda()
                 return
             
-            df_egr = df[df["Egreso"] > 0].copy()
+            df_egr = df[(df["Egreso"] > 0) & (~df["Categoria_Flujo"].isin(["Traslado_Salida", "Traslado_Entrada"]))].copy()
             df_prov = pl.read_parquet("local_cache/base_resumen.parquet").to_pandas()
             provedores_caja, provedores_banco = set(), set()
             for idx, row in df_prov.iterrows():

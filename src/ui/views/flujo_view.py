@@ -5,10 +5,12 @@ import os
 import sys
 import subprocess
 import polars as pl
+from datetime import datetime
 from src.data_engine.reports.flujo_efectivo import GeneradorFlujoEfectivo
 from src.ui.components.tarjeta_banco import TarjetaBanco
 from src.utils.file_loader import FileLoader
 from src.utils.pdf_processor import PdfProcessor
+from src.core.db_manager import DBManager
 
 class FlujoView(ft.Container):
     def __init__(self, page: ft.Page):
@@ -20,6 +22,7 @@ class FlujoView(ft.Container):
         
         self.tarjetas_bancos = {} 
         self.pdf_processor = PdfProcessor()
+        self.db_manager = DBManager()
 
         # Pickers
         self.file_picker = ft.FilePicker(on_result=self.on_dialog_result)
@@ -44,15 +47,38 @@ class FlujoView(ft.Container):
         self.page.overlay.append(self.aux_nomina_picker)
 
         # Estado interno
-        self.acumulado_pdf_ingresos = 0.0
         self.acumulado_pdf_egresos = 0.0
         self.rutas_archivos = {
             "bancolombia": None, "davivienda": None, "occidente": None,
             "agrario": None, "alianza": None, "caja": None, "caja_bancos": None
         }
         self.banco_actual_picker = None
+        self.tipo_cargue = "mensual"
+        self.fecha_seleccionada = None
 
         self.build_ui()
+
+    def cambiar_tipo_cargue(self, tipo):
+        self.tipo_cargue = tipo
+        self.switch_mensual.value = (tipo == "mensual")
+        self.switch_diario.value = (tipo == "diario")
+        
+        if tipo == "diario":
+            self.info_diario.visible = True
+            self.boton_generar.text = "Guardar Flujo Diario"
+            self.boton_generar.icon = ft.icons.SAVE
+            self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.AMBER_600, color=ft.colors.WHITE)
+            self.paso2_container.visible = False
+            self.paso3_container.visible = False
+        else:
+            self.info_diario.visible = False
+            self.boton_generar.text = "Generar Reporte Excel"
+            self.boton_generar.icon = ft.icons.PLAY_ARROW
+            self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.BLUE_800, color=ft.colors.WHITE)
+            self.paso2_container.visible = True
+            self.paso3_container.visible = True
+        
+        self.page.update()
 
     # ==========================================
     # LÓGICA: CARGAR GASTOS 2335
@@ -189,11 +215,86 @@ class FlujoView(ft.Container):
         self.page.update()
 
     def procesar_flujo(self, e):
+        if self.tipo_cargue == "diario":
+            self._procesar_flujo_diario()
+        else:
+            self._procesar_flujo_mensual(e)
+
+    def _procesar_flujo_diario(self):
+        if not self.fecha_seleccionada:
+            self._mostrar_snack("Selecciona una fecha primero", False)
+            return
+
         faltantes = [b for b, ruta in self.rutas_archivos.items() if ruta is None]
         if faltantes:
-            self.page.snack_bar = ft.SnackBar(ft.Text(f"⚠️ Faltan archivos por cargar: {', '.join(faltantes).upper()}"), bgcolor=ft.colors.ORANGE_800)
-            self.page.snack_bar.open = True
+            self._mostrar_snack(f"Faltan archivos: {', '.join(faltantes).upper()}", False)
+            return
+
+        self.boton_generar.disabled = True
+        self.boton_generar.text = "Guardando..."
+        self.page.update()
+
+        try:
+            from src.data_engine.extractors.bancolombia import BancolombiaExtractor
+            from src.data_engine.extractors.occidente import OccidenteExtractor
+            from src.data_engine.extractors.davivienda import DaviviendaExtractor
+            from src.data_engine.extractors.agrario import AgrarioExtractor
+            from src.data_engine.extractors.caja import CajaExtractor
+            from src.data_engine.extractors.alianza import AlianzaExtractor
+            from src.data_engine.extractors.caja_bancos import CajaBancosExtractor
+
+            extractores = {
+                "BANCOLOMBIA": BancolombiaExtractor,
+                "OCCIDENTE": OccidenteExtractor,
+                "DAVIVIENDA": DaviviendaExtractor,
+                "AGRARIO": AgrarioExtractor,
+                "ALIANZA": AlianzaExtractor,
+                "CAJA": CajaExtractor,
+                "CAJA_BANCOS": CajaBancosExtractor
+            }
+
+            for banco_id, ruta in self.rutas_archivos.items():
+                if ruta:
+                    try:
+                        extractor_class = extractores.get(banco_id.upper())
+                        if extractor_class:
+                            extractor = extractor_class(ruta)
+                            df = extractor.process()
+                            
+                            if not df.is_empty:
+                                ingresos = float(df["Ingreso"].sum()) if "Ingreso" in df.columns else 0.0
+                                egresos = float(df["Egreso"].sum()) if "Egreso" in df.columns else 0.0
+                                
+                                self.db_manager.guardar_flujo_diario(
+                                    self.fecha_seleccionada,
+                                    banco_id.upper(),
+                                    ingresos,
+                                    egresos
+                                )
+                    except Exception as ex:
+                        pass
+
+            self._mostrar_snack(f"✅ Flujo diario guardado para {self.fecha_seleccionada}", True)
+            self._resetear_formulario()
+
+        except Exception as ex:
+            self._mostrar_snack(f"Error: {str(ex)}", False)
+        finally:
+            self.boton_generar.disabled = False
+            self.boton_generar.text = "Guardar Flujo Diario"
             self.page.update()
+
+    def _resetear_formulario(self):
+        self.rutas_archivos = {k: None for k in self.rutas_archivos}
+        for tarjeta in self.tarjetas_bancos.values():
+            tarjeta.limpiar()
+        self.fecha_seleccionada = None
+        self.page.update()
+
+    def _procesar_flujo_mensual(self, e):
+        faltantes = [b for b, ruta in self.rutas_archivos.items() if ruta is None]
+        if faltantes:
+            self._mostrar_snack(f"⚠️ Faltan archivos por cargar: {', '.join(faltantes).upper()}", False)
             return
             
         self.save_picker.save_file(dialog_title="¿Dónde deseas guardar el reporte consolidado?", file_name="Reporte_Flujo_Mensual.xlsx", allowed_extensions=["xlsx"])
@@ -266,6 +367,27 @@ class FlujoView(ft.Container):
             ft.Divider(height=20, color=ft.colors.TRANSPARENT)
         ])
 
+        # Selector tipo de cargue
+        self.switch_mensual = ft.Switch(
+            label="Cargue Mensual", value=True,
+            on_change=lambda e: self.cambiar_tipo_cargue("mensual") if e.data == "true" else None
+        )
+        self.switch_diario = ft.Switch(
+            label="Cargue Diario", value=False,
+            on_change=lambda e: self.cambiar_tipo_cargue("diario") if e.data == "true" else None
+        )
+
+        selector_tipo = ft.Container(
+            content=ft.Row([self.switch_mensual, self.switch_diario], spacing=40),
+            padding=15, bgcolor=ft.colors.BLUE_50, border_radius=10,
+            border=ft.border.all(1, ft.colors.BLUE_200)
+        )
+
+        self.info_diario = ft.Container(
+            content=ft.Text("Los datos diarios se generarán automáticamente desde la fecha de los extractos.", size=12, color=ft.colors.GREY_600),
+            visible=False, padding=10, bgcolor=ft.colors.AMBER_50, border_radius=8
+        )
+
         # ==========================================
         # PASO 1: BANCOS PRINCIPALES
         # ==========================================
@@ -310,7 +432,7 @@ class FlujoView(ft.Container):
             ft.ElevatedButton("Nómina (25)", icon=ft.icons.PEOPLE, style=ft.ButtonStyle(bgcolor=ft.colors.INDIGO_50, color=ft.colors.INDIGO_700), on_click=lambda e: self.aux_nomina_picker.pick_files(dialog_title="Selecciona el Auxiliar 25", allowed_extensions=["xlsx", "xls"]))
         ], wrap=True, spacing=15)
 
-        panel_auxiliares = ft.Container(
+        self.paso2_container = ft.Container(
             content=botones_auxiliares, padding=20, bgcolor=ft.colors.WHITE, border_radius=10,
             border=ft.border.all(1, ft.colors.GREY_200)
         )
@@ -359,6 +481,8 @@ class FlujoView(ft.Container):
             ])
         )
 
+        self.paso3_container = panel_ajustes
+
         titulo_generar = ft.Column([
             ft.Text("Paso 4: Generación del Reporte", size=18, weight=ft.FontWeight.W_800, color=ft.colors.BLUE_800, text_align=ft.TextAlign.CENTER),
             ft.Container(height=5)
@@ -368,8 +492,11 @@ class FlujoView(ft.Container):
 
         self.content = ft.Column([
             header, 
+            selector_tipo,
+            self.info_diario,
+            ft.Divider(height=15, color=ft.colors.TRANSPARENT),
             titulo_tarjetas, ft.Container(height=5), grid_bancos, ft.Divider(height=20, color=ft.colors.GREY_300),
-            titulo_auxiliares, panel_auxiliares, ft.Divider(height=20, color=ft.colors.GREY_300),
-            titulo_ajustes, panel_ajustes, ft.Divider(height=20, color=ft.colors.TRANSPARENT),
+            titulo_auxiliares, self.paso2_container, ft.Divider(height=20, color=ft.colors.GREY_300),
+            titulo_ajustes, self.paso3_container, ft.Divider(height=20, color=ft.colors.TRANSPARENT),
             ft.Column([titulo_generar, self.boton_generar], horizontal_alignment=ft.CrossAxisAlignment.CENTER), ft.Container(height=40)
         ], scroll=ft.ScrollMode.AUTO)

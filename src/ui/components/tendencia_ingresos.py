@@ -134,7 +134,7 @@ class TendenciaIngresos(ft.Container):
             dias_cortos = {0:"Lun",1:"Mar",2:"Mié",3:"Jue",4:"Vie",5:"Sáb",6:"Dom"}
             dias_completos = {0:"Lunes",1:"Martes",2:"Miércoles",3:"Jueves",4:"Viernes",5:"Sábado",6:"Domingo"}
 
-            df_ing = df[df["Ingreso"] > 0].copy()
+            df_ing = df[(df["Ingreso"] > 0) & (~df["Categoria_Flujo"].isin(["Traslado_Salida", "Traslado_Entrada"]))].copy()
             if self.nivel_actual == "GENERAL":
                 df_ing["Categoria"] = df_ing["Origen"].apply(lambda x: "Caja" if str(x).strip().upper() == "CAJA" else "Bancos")
             elif self.nivel_actual == "BANCOS":

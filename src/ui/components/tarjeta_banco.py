@@ -63,3 +63,11 @@ class TarjetaBanco(ft.Container):
         self.input_saldo.value = f"{valor:.2f}"
         self.input_saldo.border_color = ft.colors.GREEN_500
         self.update()
+
+    def limpiar(self):
+        self.texto_estado.value = "Esperando archivo..."
+        self.texto_estado.color = ft.colors.GREY_500
+        self.texto_estado.weight = ft.FontWeight.NORMAL
+        self.input_saldo.value = ""
+        self.input_saldo.border_color = ft.colors.BLUE_200
+        self.update()
