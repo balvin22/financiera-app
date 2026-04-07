@@ -131,6 +131,10 @@ class TendenciaEgresos(ft.Container):
             if self.modo_vista == "GASTOS":
                 self._extraer_gastos_2335(dias_cortos, dias_completos)
                 return
+            
+            if self.modo_vista == "NOMINA":
+                self._extraer_nomina(dias_cortos, dias_completos)
+                return
 
             if not os.path.exists("local_cache/base_global.parquet"): return
             df = pl.read_parquet("local_cache/base_global.parquet").to_pandas()
@@ -143,6 +147,25 @@ class TendenciaEgresos(ft.Container):
                 self._extraer_entidades(df, dias_cortos, dias_completos)
             else:
                 self._extraer_proveedores(df, dias_cortos, dias_completos)
+        except: pass
+    
+    def _extraer_nomina(self, dias_cortos, dias_completos):
+        """Extrae datos de nómina por caja desde el parquet guardado"""
+        self.categorias_activas = []
+        self.datos_diarios = {}
+        
+        ruta_nomina = "local_cache/nomina_por_caja.parquet"
+        if not os.path.exists(ruta_nomina):
+            return
+        
+        try:
+            df_nomina = pd.read_parquet(ruta_nomina)
+            for _, row in df_nomina.iterrows():
+                caja = str(row['Caja']).upper()
+                valor = float(row['Valor'])
+                if caja and valor > 0:
+                    self.categorias_activas.append(caja)
+                    self.datos_diarios[caja] = valor
         except: pass
 
     def _extraer_gastos_2335(self, dias_cortos, dias_completos):
@@ -540,6 +563,11 @@ class TendenciaEgresos(ft.Container):
             self.chart_container.content = ft.Text("No hay datos para esta vista.", color=ft.colors.GREY_500)
             return
         
+        # MODO NOMINA: Mostrar como gráfico de barras horizontales
+        if self.modo_vista == "NOMINA":
+            self._dibujar_grafico_nomina()
+            return
+        
         todos_valores = [v for d in self.datos_diarios.values() for v in d["valores"].values() if v > 0]
         max_val = max(todos_valores) if todos_valores else 0
         max_m = max_val / 1_000_000
@@ -586,3 +614,51 @@ class TendenciaEgresos(ft.Container):
     def mostrar_detalle_dia(self, e):
         self.dibujar_grafico(self.dropdown_dias.value)
         if self.page: self.update()
+    
+    def _dibujar_grafico_nomina(self):
+        """Dibuja gráfico de barras horizontales para nómina por caja"""
+        if not self.categorias_activas:
+            self.chart_container.content = ft.Text("No hay datos de nómina.", color=ft.colors.GREY_500)
+            return
+        
+        items = []
+        total_nomina = sum(self.datos_diarios.values())
+        
+        # Ordenar por valor
+        cats_ord = sorted(self.categorias_activas, key=lambda x: self.datos_diarios.get(x, 0), reverse=True)
+        
+        max_val = max(self.datos_diarios.values()) if self.datos_diarios else 1
+        
+        for i, cat in enumerate(cats_ord):
+            valor = self.datos_diarios.get(cat, 0)
+            pct = (valor / total_nomina * 100) if total_nomina > 0 else 0
+            
+            items.append(
+                ft.Container(
+                    content=ft.Column([
+                        ft.Row([
+                            ft.Text(cat.title(), size=12, weight=ft.FontWeight.BOLD, color=ft.colors.RED_900, expand=True),
+                            ft.Text(f"$ {valor:,.0f}", size=12, weight=ft.FontWeight.W_600, color=ft.colors.RED_700),
+                            ft.Text(f"{pct:.1f}%", size=11, color=ft.colors.GREY_600)
+                        ], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
+                        ft.Container(
+                            height=20,
+                            bgcolor=ft.colors.RED_50,
+                            border_radius=4,
+                            content=ft.Container(
+                                width=max(10, (valor / max_val) * 300),
+                                bgcolor=ft.colors.RED_600,
+                                border_radius=4
+                            )
+                        )
+                    ], spacing=2),
+                    padding=10, bgcolor=ft.colors.WHITE, border_radius=8, 
+                    border=ft.border.all(1, ft.colors.RED_100), margin=ft.margin.only(bottom=5)
+                )
+            )
+        
+        self.chart_container.content = ft.Column([
+            ft.Text(f"Total Nómina: $ {total_nomina:,.0f}", size=16, weight=ft.FontWeight.BOLD, color=ft.colors.RED_900),
+            ft.Container(height=10),
+            ft.Column(items, scroll=ft.ScrollMode.AUTO, height=300)
+        ])

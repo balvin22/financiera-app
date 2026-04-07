@@ -5,8 +5,10 @@ import os
 import sqlite3
 import re
 
+AJUSTE_INGRESOS_CAJA = 0
+
 # =========================================================================
-# --- MOTOR DE CARGA DE BD SQLITE (PROVEEDORES, 2335 Y CAJAS) ---
+# --- MOTOR DE CARGA DE BD SQLITE (PROVEEDORES Y CUENTAS 2335) ---
 # =========================================================================
 PROVEEDORES_LISTA = []
 DICT_CUENTAS_2335 = {}
@@ -51,6 +53,10 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
                 df_gastos['MCNVALDEBI'] = pd.to_numeric(df_gastos['MCNVALDEBI'], errors='coerce').fillna(0)
                 df_pagos = df_gastos[df_gastos['MCNVALDEBI'] > 0].copy()
                 
+                col_doc = 'MCNTIPODOC' if 'MCNTIPODOC' in df_pagos.columns else None
+                if col_doc: df_pagos['Origen_Caja'] = df_pagos[col_doc].apply(lambda x: MAPEO_DOCS_CAJA.get(str(x).strip().upper(), "OTRAS CAJAS"))
+                else: df_pagos['Origen_Caja'] = "OTRAS CAJAS"
+                
                 def mapear_cuenta(codigo, detalle):
                     cod_str = str(codigo).strip()
                     if cod_str.endswith(".0"): cod_str = cod_str[:-2]
@@ -94,32 +100,17 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
         except Exception as e:
             print(f"Advertencia: No se procesó aux_prov_2205.xlsx - {e}")
 
-    # --- NUEVO: MOTOR DE EXTRACCIÓN NÓMINA (AUX 25) ---
+    # --- NUEVO: MOTOR DE EXTRACCIÓN NÓMINA GLOBAL (AUX 25) ---
     total_nomina = 0.0
-    detalle_nomina_cajas = []
     ruta_aux_nomina = "local_cache/aux_nomina_25.xlsx"
     if os.path.exists(ruta_aux_nomina):
         try:
             df_nomina = pd.read_excel(ruta_aux_nomina)
             df_nomina.columns = df_nomina.columns.str.strip().str.upper()
-            
-            # Filtrar solo EGRESOS
-            if 'MCNTIPODOC' in df_nomina.columns:
-                df_nomina = df_nomina[df_nomina['MCNTIPODOC'].astype(str).str.upper().str.strip() == 'EGRESOS']
-            
             if 'MCNVALDEBI' in df_nomina.columns:
                 df_nomina['MCNVALDEBI'] = pd.to_numeric(df_nomina['MCNVALDEBI'], errors='coerce').fillna(0)
+                # SUMAMOS TODO LO PAGADO SIN IMPORTAR EL MEDIO DE PAGO
                 total_nomina = float(df_nomina['MCNVALDEBI'].sum())
-                
-                # Agrupar por centro de costo (caja)
-                if 'MCNCUENTA' in df_nomina.columns:
-                    df_nomina['CCO_Clean'] = df_nomina['MCNCUENTA'].astype(str).str.extract(r'(\d{5})', expand=False)
-                    nomina_por_caja = df_nomina.groupby('CCO_Clean')['MCNVALDEBI'].sum()
-                    mapeo_cajas_inv = {v: k for k, v in MAPEO_CAJAS_BD.items()}
-                    for cco, valor in nomina_por_caja.items():
-                        if valor > 0:
-                            nombre_caja = mapeo_cajas_inv.get(cco, cco)
-                            detalle_nomina_cajas.append({"Concepto": f"   > C.C: {nombre_caja.title()}", "Valor": float(valor)})
         except Exception as e:
             print(f"Advertencia: No se procesó aux_nomina_25.xlsx - {e}")
 
@@ -237,18 +228,10 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
     estructura_resumen.extend([{"Concepto": "DESGLOSE DE PROVEEDORES (BANCOS)", "Valor": None}])
     estructura_resumen.extend(desglose_proveedores_bancos)
 
-    # --- SECCIÓN GASTOS (CON LA NÓMINA EN GRANDE) ---
+    # --- SECCIÓN GASTOS (CON LA NÓMINA GLOBAL EN GRANDE) ---
     estructura_resumen.extend([
         {"Concepto": "", "Valor": None},
         {"Concepto": "PAGO DE NÓMINA Y PRESTACIONES (AUX 25)", "Valor": total_nomina} if total_nomina > 0 else None,
-    ])
-    
-    # Agregar detalle de nómina por caja
-    if detalle_nomina_cajas:
-        for item in detalle_nomina_cajas:
-            estructura_resumen.append(item)
-    
-    estructura_resumen.extend([
         {"Concepto": "", "Valor": None},
         {"Concepto": "SALIDAS POR GASTOS OPERACIONALES", "Valor": None},
     ])

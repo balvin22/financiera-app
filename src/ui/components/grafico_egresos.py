@@ -36,6 +36,10 @@ class GraficoEgresos(ft.Container):
         
         self.datos_hover = [] 
         
+        # NUEVO: Datos de nómina por caja
+        self.datos_nomina_cajas = {}
+        self.datos_gen_nomina = {}
+        
         self.dona_grafico = ft.PieChart(sections=[], sections_space=2, center_space_radius=35, on_chart_event=self.on_hover_dona)
         self.texto_hover = ft.Text("Apunta al grafico para detalles", size=11, color=ft.colors.GREY_400, text_align=ft.TextAlign.CENTER)
         self.leyenda_contenedor = ft.Column(scroll=ft.ScrollMode.ALWAYS, spacing=5)
@@ -44,8 +48,9 @@ class GraficoEgresos(ft.Container):
         self.btn_entidades = ft.TextButton("Entidades", on_click=lambda e: self.cambiar_modo("ENTIDADES"))
         self.btn_proveedores = ft.TextButton("Proveedores", on_click=lambda e: self.cambiar_modo("PROVEEDORES"))
         self.btn_gastos = ft.TextButton("Gastos (2335)", on_click=lambda e: self.cambiar_modo("GASTOS"))
+        self.btn_nomina = ft.TextButton("Nómina (25)", on_click=lambda e: self.cambiar_modo("NOMINA"))
         
-        self.contenedor_tabs = ft.Row([self.btn_entidades, self.btn_proveedores, self.btn_gastos], spacing=0)
+        self.contenedor_tabs = ft.Row([self.btn_entidades, self.btn_proveedores, self.btn_gastos, self.btn_nomina], spacing=0)
         self.boton_volver = ft.ElevatedButton("← Volver", on_click=self.volver_dona, visible=False, style=ft.ButtonStyle(color=ft.colors.RED_700, bgcolor=ft.colors.RED_50, padding=10))
         
         self.tabla_detalle = ft.DataTable(
@@ -236,6 +241,19 @@ class GraficoEgresos(ft.Container):
                     elif self.datos_caj_categorias[c].get("Proveedores", 0.0) >= exceso:
                         self.datos_caj_categorias[c]["Proveedores"] -= exceso
 
+        # === CARGAR DATOS DE NÓMINA (AUX 25) ===
+        ruta_nomina = "local_cache/nomina_por_caja.parquet"
+        if os.path.exists(ruta_nomina):
+            try:
+                df_nomina = pd.read_parquet(ruta_nomina)
+                self.datos_gen_nomina = {"Nómina (Aux 25)": df_nomina['Valor'].sum()}
+                for _, row in df_nomina.iterrows():
+                    caja = str(row['Caja']).upper()
+                    valor = float(row['Valor'])
+                    if caja and valor > 0:
+                        self.datos_nomina_cajas[caja] = valor
+            except: pass
+
     def cambiar_modo(self, modo: str):
         self.modo_vista = modo
         self.nivel_dona = "GENERAL"
@@ -244,7 +262,9 @@ class GraficoEgresos(ft.Container):
         if self.on_modo_change: self.on_modo_change(modo)
 
     def volver_dona(self, e):
-        if self.nivel_dona in ["BANCOS", "CAJA"] or (self.modo_vista == "GASTOS" and self.nivel_dona != "GENERAL"):
+        if self.modo_vista == "NOMINA" and self.nivel_dona == "NOMINA_POR_CAJA":
+            self.nivel_dona = "GENERAL"
+        elif self.nivel_dona in ["BANCOS", "CAJA"] or (self.modo_vista == "GASTOS" and self.nivel_dona != "GENERAL"):
             self.nivel_dona = "GENERAL"
             self.caja_seleccionada = None
         elif self.nivel_dona == "CATEGORIAS_CAJA":
@@ -260,6 +280,7 @@ class GraficoEgresos(ft.Container):
         self.btn_entidades.style = ft.ButtonStyle(bgcolor=ft.colors.RED_50 if self.modo_vista == "ENTIDADES" else ft.colors.TRANSPARENT, color=ft.colors.RED_900 if self.modo_vista == "ENTIDADES" else ft.colors.GREY_500)
         self.btn_proveedores.style = ft.ButtonStyle(bgcolor=ft.colors.RED_50 if self.modo_vista == "PROVEEDORES" else ft.colors.TRANSPARENT, color=ft.colors.RED_900 if self.modo_vista == "PROVEEDORES" else ft.colors.GREY_500)
         self.btn_gastos.style = ft.ButtonStyle(bgcolor=ft.colors.RED_50 if self.modo_vista == "GASTOS" else ft.colors.TRANSPARENT, color=ft.colors.RED_900 if self.modo_vista == "GASTOS" else ft.colors.GREY_500)
+        self.btn_nomina.style = ft.ButtonStyle(bgcolor=ft.colors.RED_50 if self.modo_vista == "NOMINA" else ft.colors.TRANSPARENT, color=ft.colors.RED_900 if self.modo_vista == "NOMINA" else ft.colors.GREY_500)
 
         es_clicable = False
 
@@ -297,6 +318,14 @@ class GraficoEgresos(ft.Container):
             elif self.nivel_dona == "GASTOS OPERACIONALES (2335)":
                 datos, self.titulo_grafico.value, self.boton_volver.visible = self.datos_caj_gastos, "Egresos 2335 por Caja", True
 
+        elif self.modo_vista == "NOMINA":
+            if self.nivel_dona == "GENERAL":
+                datos, self.titulo_grafico.value, self.boton_volver.visible, es_clicable = self.datos_gen_nomina, "Nómina y Prestaciones (Aux 25)", False, False
+            elif self.nivel_dona == "NOMINA_POR_CAJA":
+                datos = self.datos_nomina_cajas
+                self.titulo_grafico.value = "Detalle Nómina por Caja"
+                self.boton_volver.visible = True
+
         datos = {k: v for k, v in datos.items() if v > 0}
         datos = dict(sorted(datos.items(), key=lambda x: x[1], reverse=True))
         
@@ -316,7 +345,9 @@ class GraficoEgresos(ft.Container):
             
             def crear_evento(cat_label):
                 def on_click(e):
-                    if self.nivel_dona == "GENERAL": self.nivel_dona = cat_label.upper()
+                    if self.modo_vista == "NOMINA" and self.nivel_dona == "GENERAL":
+                        self.nivel_dona = "NOMINA_POR_CAJA"
+                    elif self.nivel_dona == "GENERAL": self.nivel_dona = cat_label.upper()
                     elif self.nivel_dona == "CAJA":
                         self.nivel_dona = "CATEGORIAS_CAJA"
                         self.caja_seleccionada = cat_label.upper()
@@ -358,7 +389,12 @@ class GraficoEgresos(ft.Container):
         self.tabla_detalle.rows = filas_tabla
         
         if self.on_nivel_change:
-            estado_tendencia = "DETALLE_CAJA" if self.nivel_dona in ["CATEGORIAS_CAJA", "PROVEEDORES_CAJA", "GASTOS_CAJA"] else self.nivel_dona
+            if self.modo_vista == "NOMINA":
+                estado_tendencia = "NOMINA"
+            elif self.nivel_dona in ["CATEGORIAS_CAJA", "PROVEEDORES_CAJA", "GASTOS_CAJA"]:
+                estado_tendencia = "DETALLE_CAJA"
+            else:
+                estado_tendencia = self.nivel_dona
             self.on_nivel_change(estado_tendencia, self.caja_seleccionada)
             
         self.update_safe()
