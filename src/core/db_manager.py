@@ -32,11 +32,19 @@ class DBManager:
                                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                                 fecha TEXT,
                                 banco TEXT,
-                                ingresos REAL,
-                                egresos REAL,
+                                saldo_inicial REAL DEFAULT 0,
+                                ingresos REAL DEFAULT 0,
+                                egresos REAL DEFAULT 0,
                                 created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
             cursor.execute('''CREATE INDEX IF NOT EXISTS idx_flujos_diarios_fecha ON flujos_diarios(fecha)''')
             cursor.execute('''CREATE INDEX IF NOT EXISTS idx_flujos_diarios_banco ON flujos_diarios(banco)''')
+            
+            # Forzamos la creación de la columna por si la tabla ya existía en tu PC
+            try:
+                cursor.execute("ALTER TABLE flujos_diarios ADD COLUMN saldo_inicial REAL DEFAULT 0")
+            except:
+                pass
+                
             conn.commit()
 
     def get_all(self, tabla: str):
@@ -66,7 +74,6 @@ class DBManager:
     def importar_desde_excel(self, tabla: str, ruta_excel: str):
         try:
             if tabla == "centros_costos":
-                # Leemos tu Excel tal cual (asumiendo que tiene los encabezados de tu foto)
                 df = pd.read_excel(ruta_excel)
                 for index, row in df.iterrows():
                     codigo = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
@@ -74,11 +81,8 @@ class DBManager:
                         nombre = str(row.iloc[1]).strip().upper() if pd.notna(row.iloc[1]) else ""
                         recauda = str(row.iloc[2]).strip().upper() if pd.notna(row.iloc[2]) else ""
                         docs = str(row.iloc[3]).strip().upper() if pd.notna(row.iloc[3]) else ""
-                        
-                        # Limpiamos los "NAN" para que no queden feos en la BD
                         if recauda == "NAN": recauda = ""
                         if docs == "NAN": docs = ""
-                        
                         self.insert_or_update(tabla, codigo, nombre, recauda, docs)
             else:
                 df = pd.read_excel(ruta_excel, header=None)
@@ -93,19 +97,19 @@ class DBManager:
             logger.error(f"Error importando: {e}")
             return False
 
-    def guardar_flujo_diario(self, fecha: str, banco: str, ingresos: float, egresos: float):
+    def guardar_flujo_diario(self, fecha: str, banco: str, saldo_inicial: float = 0, ingresos: float = 0, egresos: float = 0):
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                INSERT INTO flujos_diarios (fecha, banco, ingresos, egresos)
-                VALUES (?, ?, ?, ?)
-            ''', (fecha, banco, ingresos, egresos))
+                INSERT INTO flujos_diarios (fecha, banco, saldo_inicial, ingresos, egresos)
+                VALUES (?, ?, ?, ?, ?)
+            ''', (fecha, banco, saldo_inicial, ingresos, egresos))
             conn.commit()
 
     def get_flujos_diarios(self, fecha_inicio: str = None, fecha_fin: str = None, banco: str = None):
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
-            query = "SELECT fecha, banco, ingresos, egresos FROM flujos_diarios WHERE 1=1"
+            query = "SELECT fecha, banco, saldo_inicial, ingresos, egresos FROM flujos_diarios WHERE 1=1"
             params = []
             
             if fecha_inicio:
@@ -138,7 +142,7 @@ class DBManager:
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute('''
-                SELECT fecha, SUM(ingresos) as total_ingresos, SUM(egresos) as total_egresos
+                SELECT fecha, SUM(saldo_inicial) as total_saldo_inicial, SUM(ingresos) as total_ingresos, SUM(egresos) as total_egresos
                 FROM flujos_diarios
                 GROUP BY fecha
                 ORDER BY fecha DESC

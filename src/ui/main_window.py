@@ -4,6 +4,7 @@ from src.ui.views.flujo_view import FlujoView
 from src.ui.views.dashboard_view import DashboardView
 from src.ui.views.maestros_view import MaestrosView
 from src.ui.views.flujo_diario_graficos import FlujoDiarioGraficos
+from src.core.db_manager import DBManager
 
 def build_main_window(page: ft.Page):
     page.title = "Consolidador Financiero - Flujo de Efectivo"
@@ -30,6 +31,7 @@ def build_main_window(page: ft.Page):
             vista_maestros.cargar_datos()
             area_trabajo.content = vista_maestros
         elif destino == "graficos_diarios":
+            vista_graficos_diarios.db_manager = DBManager()
             vista_graficos_diarios.build_ui()
             area_trabajo.content = vista_graficos_diarios
         

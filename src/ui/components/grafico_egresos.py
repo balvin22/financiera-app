@@ -1,14 +1,8 @@
 # src/ui/components/grafico_egresos.py
 import flet as ft
-import polars as pl
-import pandas as pd
 import json
-import sqlite3
-import os
-from src.core.mapeos import (
-    COLORES_ENTIDADES, COLORES_BANCOS, COLORES_CAJAS, COLORES_PROVEEDORES,
-    obtener_color, obtener_color_proveedor
-)
+from src.core.mapeos import obtener_color, obtener_color_proveedor
+from src.data_engine.transformers.rules_caja import procesar_datos_grafico_egresos
 
 class GraficoEgresos(ft.Container):
     def __init__(self, on_nivel_change=None, on_modo_change=None):
@@ -26,31 +20,23 @@ class GraficoEgresos(ft.Container):
         self.nivel_dona = "GENERAL"
         self.caja_seleccionada = None
         
-        self.datos_gen_entidades, self.datos_ban_entidades, self.datos_caj_entidades = {}, {}, {}
-        self.datos_gen_proveedores, self.datos_ban_proveedores, self.datos_caj_proveedores = {}, {}, {}
-        self.datos_gen_gastos, self.datos_caj_gastos = {}, {}
-        
+        # Inicializamos los diccionarios vacíos
+        self.datos_gen_entidades = {}
+        self.datos_ban_entidades = {}
+        self.datos_caj_entidades = {}
         self.datos_caj_categorias = {} 
         self.datos_caj_prov_detalle = {} 
         self.datos_caj_gas_detalle = {} 
-        
+        self.datos_caj_nom_detalle = {} 
         self.datos_hover = [] 
         
-        # NUEVO: Datos de nómina por caja
-        self.datos_nomina_cajas = {}
-        self.datos_gen_nomina = {}
-        
+        # UI Elements
         self.dona_grafico = ft.PieChart(sections=[], sections_space=2, center_space_radius=35, on_chart_event=self.on_hover_dona)
         self.texto_hover = ft.Text("Apunta al grafico para detalles", size=11, color=ft.colors.GREY_400, text_align=ft.TextAlign.CENTER)
         self.leyenda_contenedor = ft.Column(scroll=ft.ScrollMode.ALWAYS, spacing=5)
         self.titulo_grafico = ft.Text("Salidas Operacionales", weight=ft.FontWeight.BOLD, size=16, color=ft.colors.RED_900)
-        
-        self.btn_entidades = ft.TextButton("Entidades", on_click=lambda e: self.cambiar_modo("ENTIDADES"))
-        self.btn_proveedores = ft.TextButton("Proveedores", on_click=lambda e: self.cambiar_modo("PROVEEDORES"))
-        self.btn_gastos = ft.TextButton("Gastos (2335)", on_click=lambda e: self.cambiar_modo("GASTOS"))
-        self.btn_nomina = ft.TextButton("Nómina (25)", on_click=lambda e: self.cambiar_modo("NOMINA"))
-        
-        self.contenedor_tabs = ft.Row([self.btn_entidades, self.btn_proveedores, self.btn_gastos, self.btn_nomina], spacing=0)
+        self.btn_entidades = ft.TextButton("Entidades", on_click=lambda e: self.volver_inicio())
+        self.contenedor_tabs = ft.Row([self.btn_entidades], spacing=0)
         self.boton_volver = ft.ElevatedButton("← Volver", on_click=self.volver_dona, visible=False, style=ft.ButtonStyle(color=ft.colors.RED_700, bgcolor=ft.colors.RED_50, padding=10))
         
         self.tabla_detalle = ft.DataTable(
@@ -62,7 +48,22 @@ class GraficoEgresos(ft.Container):
             rows=[], column_spacing=15, heading_row_color=ft.colors.RED_50
         )
 
-        self.extraer_datos_grafico()
+        self.cargar_y_construir()
+
+    def cargar_y_construir(self):
+        """Ejecuta la extracción de datos y construye la UI inicial."""
+        # Delegamos TODO el procesamiento pesado al transformer
+        datos = procesar_datos_grafico_egresos()
+        
+        # Asignamos los resultados a las variables de estado del componente
+        self.datos_gen_entidades = datos["datos_gen_entidades"]
+        self.datos_ban_entidades = datos["datos_ban_entidades"]
+        self.datos_caj_entidades = datos["datos_caj_entidades"]
+        self.datos_caj_categorias = datos["datos_caj_categorias"]
+        self.datos_caj_prov_detalle = datos["datos_caj_prov_detalle"]
+        self.datos_caj_gas_detalle = datos["datos_caj_gas_detalle"]
+        self.datos_caj_nom_detalle = datos["datos_caj_nom_detalle"]
+
         self.construir_ui()
         self.actualizar_dona_ui()
 
@@ -77,254 +78,51 @@ class GraficoEgresos(ft.Container):
             ], vertical_alignment=ft.CrossAxisAlignment.START)
         ])
 
-    def extraer_datos_grafico(self):
-        db_path = "local_cache/maestros.db"
-        mapeo_cajas, dict_cuentas_2335, proveedores_lista = {}, {}, set()
-
-        if os.path.exists(db_path):
-            try:
-                with sqlite3.connect(db_path) as conn:
-                    cursor = conn.cursor()
-                    cursor.execute("SELECT codigo, nombre FROM proveedores")
-                    for r in cursor.fetchall(): proveedores_lista.add(str(r[1]).strip().upper())
-                    cursor.execute("SELECT codigo, nombre FROM cuentas_2335")
-                    for r in cursor.fetchall(): dict_cuentas_2335[str(r[0]).strip()] = str(r[1]).strip().title()
-                    cursor.execute("SELECT codigo, recauda FROM centros_costos")
-                    for r in cursor.fetchall():
-                        c, rec = str(r[0]).strip(), str(r[1]).strip().upper()
-                        if rec: mapeo_cajas[c] = rec
-            except: pass
-
-        try:
-            df_res = pl.read_parquet("local_cache/base_resumen.parquet").to_pandas()
-            try: self.datos_gen_entidades = {"Bancos": df_res.loc[df_res['Concepto'] == 'Total Salidas x Bancos', 'Valor'].values[0], "CAJA": df_res.loc[df_res['Concepto'] == 'Total Salidas x Caja', 'Valor'].values[0]}
-            except: pass
-            
-            try:
-                idx_start = df_res.index[df_res['Concepto'] == 'DETALLE DE SALIDAS BANCARIAS'][0]
-                idx_end = df_res.index[df_res['Concepto'] == 'Total Salidas x Bancos'][0]
-                for _, row in df_res.iloc[idx_start+1 : idx_end].iterrows():
-                    if pd.notna(row['Valor']) and row['Valor'] > 0: self.datos_ban_entidades[str(row['Concepto']).replace("Salidas ", "").upper()] = row['Valor']
-            except: pass
-            
-            try:
-                idx_start = df_res.index[df_res['Concepto'] == 'DETALLE DE SALIDAS POR CAJA'][0]
-                idx_end = df_res.index[df_res['Concepto'] == 'Total Salidas x Caja'][0]
-                ajuste_cruce = 0.0
-                for _, row in df_res.iloc[idx_start+1 : idx_end].iterrows():
-                    if pd.notna(row['Valor']):
-                        key_raw = str(row['Concepto']).upper()
-                        val = float(row['Valor'])
-                        if "AJUSTE CRUCE" in key_raw or "DON DIEGO" in key_raw:
-                            ajuste_cruce += val
-                        elif val > 0:
-                            key_clean = str(row['Concepto']).replace("   > C.C: ", "").replace("   > ", "").strip().upper()
-                            self.datos_caj_entidades[key_clean] = val
-                
-                if "CAJA POPAYAN PPAL" in self.datos_caj_entidades and ajuste_cruce != 0:
-                    self.datos_caj_entidades["CAJA POPAYAN PPAL"] -= abs(ajuste_cruce)
-                    if self.datos_caj_entidades["CAJA POPAYAN PPAL"] < 0: self.datos_caj_entidades["CAJA POPAYAN PPAL"] = 0.0
-            except: pass
-            
-            try: self.datos_gen_proveedores = {"Bancos": df_res.loc[df_res['Concepto'] == 'Pagos por Bancos', 'Valor'].values[0], "CAJA": df_res.loc[df_res['Concepto'] == 'Pagos por Caja', 'Valor'].values[0]}
-            except: pass
-            
-            try:
-                idx_start = df_res.index[df_res['Concepto'] == 'DESGLOSE DE PROVEEDORES (BANCOS)'][0]
-                idx_end = df_res.index[df_res['Concepto'] == 'SALIDAS POR GASTOS OPERACIONALES'][0] if 'SALIDAS POR GASTOS OPERACIONALES' in df_res['Concepto'].values else len(df_res)
-                for _, row in df_res.iloc[idx_start+1 : idx_end].iterrows():
-                    if pd.notna(row['Valor']) and row['Valor'] > 0 and 'Prov Banco:' in str(row['Concepto']): self.datos_ban_proveedores[str(row['Concepto']).replace("   > Prov Banco: ", "").upper()] = row['Valor']
-            except: pass
-            
-            try:
-                idx_start = df_res.index[df_res['Concepto'] == 'DESGLOSE DE PROVEEDORES (CAJA)'][0]
-                idx_end = df_res.index[df_res['Concepto'] == 'DESGLOSE DE PROVEEDORES (BANCOS)'][0]
-                for _, row in df_res.iloc[idx_start+1 : idx_end].iterrows():
-                    if pd.notna(row['Valor']) and row['Valor'] > 0 and 'Prov Caja:' in str(row['Concepto']): self.datos_caj_proveedores[str(row['Concepto']).replace("   > Prov Caja: ", "").upper()] = row['Valor']
-            except: pass
-        except: pass
-
-        self.datos_caj_categorias = {}
-        self.datos_caj_prov_detalle = {}
-        self.datos_caj_gas_detalle = {}
-        mapping_numero_caja = {}  # <--- DICCIONARIO CRUCE NUMERO A CAJA
-        
-        if os.path.exists("local_cache/base_global.parquet"):
-            try:
-                df_global = pl.read_parquet("local_cache/base_global.parquet").to_pandas()
-                df_caja = df_global[
-                    (df_global['Origen'].str.upper() == 'CAJA') & 
-                    (df_global['Egreso'] > 0) &
-                    (df_global['Categoria_Flujo'] == 'Operacion_Normal')
-                ].copy()
-                df_caja['CCO_Clean'] = df_caja['NOMBRE_CCO'].astype(str).str.extract(r'(\d{5})', expand=False)
-                df_caja['Caja_Real'] = df_caja['CCO_Clean'].map(mapeo_cajas).fillna(df_caja['NOMBRE_CCO']).str.upper()
-                df_caja['EsProv'] = df_caja['Tercero'].apply(lambda x: str(x).strip().upper() in proveedores_lista if pd.notna(x) else False)
-                
-                # --- TU IDEA APLICADA AQUÍ: CREAR EL MAPEO EXACTO ---
-                if 'Numero_Doc' in df_caja.columns:
-                    for _, row in df_caja.iterrows():
-                        num = str(row['Numero_Doc']).strip().replace(".0", "")
-                        caja = str(row['Caja_Real']).upper()
-                        if num and num != "NAN":
-                            mapping_numero_caja[num] = caja
-                
-                provs_caja = df_caja[df_caja['EsProv']].copy()
-                for _, row in provs_caja.iterrows():
-                    c = str(row['Caja_Real'])
-                    v = float(row['Egreso'])
-                    prov_name = str(row['Tercero']).strip().title()
-                    
-                    if c not in self.datos_caj_categorias: self.datos_caj_categorias[c] = {"Proveedores": 0.0, "Gastos Operacionales": 0.0}
-                    if c not in self.datos_caj_prov_detalle: self.datos_caj_prov_detalle[c] = {}
-                        
-                    self.datos_caj_categorias[c]["Proveedores"] += v
-                    self.datos_caj_prov_detalle[c][prov_name] = self.datos_caj_prov_detalle[c].get(prov_name, 0.0) + v
-            except: pass
-
-        ruta_gastos = "local_cache/gastos_2335.xlsx"
-        if os.path.exists(ruta_gastos):
-            try:
-                df_gastos = pd.read_excel(ruta_gastos)
-                df_gastos.columns = df_gastos.columns.str.strip().str.upper()
-                if 'MCNVALDEBI' in df_gastos.columns and 'MCNNUMEDOC' in df_gastos.columns:
-                    df_gastos['MCNVALDEBI'] = pd.to_numeric(df_gastos['MCNVALDEBI'], errors='coerce').fillna(0)
-                    df_pagos = df_gastos[df_gastos['MCNVALDEBI'] > 0].copy()
-                    
-                    # --- CRUCE PERFECTO NUMERO VS MCNNUMEDOC ---
-                    df_pagos['MCNNUMEDOC_str'] = df_pagos['MCNNUMEDOC'].astype(str).str.strip().str.replace(".0", "", regex=False)
-                    df_pagos['Origen_Caja'] = df_pagos['MCNNUMEDOC_str'].apply(lambda x: mapping_numero_caja.get(x, "OTRO"))
-                    
-                    def mapear_cuenta(codigo):
-                        cod_str = str(codigo).strip()
-                        if cod_str.endswith(".0"): cod_str = cod_str[:-2]
-                        if cod_str in dict_cuentas_2335: return dict_cuentas_2335[cod_str]
-                        if len(cod_str) >= 6:
-                            raiz = cod_str[:6]
-                            for c_bd, n_bd in dict_cuentas_2335.items():
-                                if str(c_bd).startswith(raiz): return n_bd
-                        return "Otros Gastos 2335"
-
-                    df_pagos['Categoria'] = df_pagos['MCNCUENTA'].apply(mapear_cuenta)
-                    
-                    agrupado_caja = df_pagos.groupby('Origen_Caja')['MCNVALDEBI'].sum()
-                    for cat, valor in agrupado_caja.items():
-                        if valor > 0: self.datos_caj_gastos[cat] = float(valor)
-                    self.datos_gen_gastos = {"Gastos Operacionales (2335)": df_pagos['MCNVALDEBI'].sum()}
-                    
-                    df_pagos_caja = df_pagos[df_pagos['Origen_Caja'] != "OTRO"].copy()
-                    for _, row in df_pagos_caja.iterrows():
-                        c = str(row['Origen_Caja'])
-                        v = float(row['MCNVALDEBI'])
-                        cat = str(row['Categoria'])
-                        
-                        if c not in self.datos_caj_categorias: self.datos_caj_categorias[c] = {"Proveedores": 0.0, "Gastos Operacionales": 0.0}
-                        if c not in self.datos_caj_gas_detalle: self.datos_caj_gas_detalle[c] = {}
-                            
-                        self.datos_caj_categorias[c]["Gastos Operacionales"] += v
-                        self.datos_caj_gas_detalle[c][cat] = self.datos_caj_gas_detalle[c].get(cat, 0.0) + v
-            except: pass
-            
-        for c, v_total in self.datos_caj_entidades.items():
-            if c not in self.datos_caj_categorias:
-                self.datos_caj_categorias[c] = {"Proveedores": 0.0, "Gastos Operacionales": 0.0, "Otros Egresos": v_total}
-            else:
-                sum_identificados = self.datos_caj_categorias[c].get("Proveedores", 0.0) + self.datos_caj_categorias[c].get("Gastos Operacionales", 0.0)
-                diff = v_total - sum_identificados
-                
-                if diff > 1000: 
-                    self.datos_caj_categorias[c]["Otros Egresos"] = diff
-                elif diff < -1000:
-                    exceso = abs(diff)
-                    if self.datos_caj_categorias[c].get("Gastos Operacionales", 0.0) >= exceso:
-                        self.datos_caj_categorias[c]["Gastos Operacionales"] -= exceso
-                    elif self.datos_caj_categorias[c].get("Proveedores", 0.0) >= exceso:
-                        self.datos_caj_categorias[c]["Proveedores"] -= exceso
-
-        # === CARGAR DATOS DE NÓMINA (AUX 25) ===
-        ruta_nomina = "local_cache/nomina_por_caja.parquet"
-        if os.path.exists(ruta_nomina):
-            try:
-                df_nomina = pd.read_parquet(ruta_nomina)
-                self.datos_gen_nomina = {"Nómina (Aux 25)": df_nomina['Valor'].sum()}
-                for _, row in df_nomina.iterrows():
-                    caja = str(row['Caja']).upper()
-                    valor = float(row['Valor'])
-                    if caja and valor > 0:
-                        self.datos_nomina_cajas[caja] = valor
-            except: pass
-
-    def cambiar_modo(self, modo: str):
-        self.modo_vista = modo
+    def volver_inicio(self):
         self.nivel_dona = "GENERAL"
         self.caja_seleccionada = None
         self.actualizar_dona_ui()
-        if self.on_modo_change: self.on_modo_change(modo)
+        if self.on_nivel_change: self.on_nivel_change("GENERAL", None)
 
     def volver_dona(self, e):
-        if self.modo_vista == "NOMINA" and self.nivel_dona == "NOMINA_POR_CAJA":
-            self.nivel_dona = "GENERAL"
-        elif self.nivel_dona in ["BANCOS", "CAJA"] or (self.modo_vista == "GASTOS" and self.nivel_dona != "GENERAL"):
+        if self.nivel_dona in ["BANCOS", "CAJA"]:
             self.nivel_dona = "GENERAL"
             self.caja_seleccionada = None
         elif self.nivel_dona == "CATEGORIAS_CAJA":
             self.nivel_dona = "CAJA"
             self.caja_seleccionada = None
-        elif self.nivel_dona in ["PROVEEDORES_CAJA", "GASTOS_CAJA"]:
+        elif self.nivel_dona in ["PROVEEDORES_CAJA", "GASTOS_CAJA", "NOMINA_CAJA"]:
             self.nivel_dona = "CATEGORIAS_CAJA"
             
         self.actualizar_dona_ui()
 
     def actualizar_dona_ui(self):
         datos = {}
-        self.btn_entidades.style = ft.ButtonStyle(bgcolor=ft.colors.RED_50 if self.modo_vista == "ENTIDADES" else ft.colors.TRANSPARENT, color=ft.colors.RED_900 if self.modo_vista == "ENTIDADES" else ft.colors.GREY_500)
-        self.btn_proveedores.style = ft.ButtonStyle(bgcolor=ft.colors.RED_50 if self.modo_vista == "PROVEEDORES" else ft.colors.TRANSPARENT, color=ft.colors.RED_900 if self.modo_vista == "PROVEEDORES" else ft.colors.GREY_500)
-        self.btn_gastos.style = ft.ButtonStyle(bgcolor=ft.colors.RED_50 if self.modo_vista == "GASTOS" else ft.colors.TRANSPARENT, color=ft.colors.RED_900 if self.modo_vista == "GASTOS" else ft.colors.GREY_500)
-        self.btn_nomina.style = ft.ButtonStyle(bgcolor=ft.colors.RED_50 if self.modo_vista == "NOMINA" else ft.colors.TRANSPARENT, color=ft.colors.RED_900 if self.modo_vista == "NOMINA" else ft.colors.GREY_500)
-
+        self.btn_entidades.style = ft.ButtonStyle(bgcolor=ft.colors.RED_50, color=ft.colors.RED_900)
         es_clicable = False
 
-        if self.modo_vista == "ENTIDADES":
-            if self.nivel_dona == "GENERAL":
-                datos, self.titulo_grafico.value, self.boton_volver.visible, es_clicable = self.datos_gen_entidades, "Salidas (Bancos vs Caja)", False, True
-            elif self.nivel_dona == "BANCOS":
-                datos, self.titulo_grafico.value, self.boton_volver.visible = self.datos_ban_entidades, "Detalle Salidas Bancarias", True
-            elif self.nivel_dona == "CAJA":
-                datos, self.titulo_grafico.value, self.boton_volver.visible, es_clicable = self.datos_caj_entidades, "Detalle Salidas por Cajas", True, True
-            elif self.nivel_dona == "CATEGORIAS_CAJA":
-                datos = self.datos_caj_categorias.get(self.caja_seleccionada, {})
-                self.titulo_grafico.value = f"Egresos {self.caja_seleccionada.title()}"
-                self.boton_volver.visible, es_clicable = True, True
-            elif self.nivel_dona == "PROVEEDORES_CAJA":
-                datos = self.datos_caj_prov_detalle.get(self.caja_seleccionada, {})
-                self.titulo_grafico.value = f"Proveedores {self.caja_seleccionada.title()}"
-                self.boton_volver.visible = True
-            elif self.nivel_dona == "GASTOS_CAJA":
-                datos = self.datos_caj_gas_detalle.get(self.caja_seleccionada, {})
-                self.titulo_grafico.value = f"Gastos {self.caja_seleccionada.title()}"
-                self.boton_volver.visible = True
-
-        elif self.modo_vista == "PROVEEDORES":
-            if self.nivel_dona == "GENERAL":
-                datos, self.titulo_grafico.value, self.boton_volver.visible, es_clicable = self.datos_gen_proveedores, "Pago Proveedores (Canal)", False, True
-            elif self.nivel_dona == "BANCOS":
-                datos, self.titulo_grafico.value, self.boton_volver.visible = self.datos_ban_proveedores, "Proveedores por Banco", True
-            elif self.nivel_dona == "CAJA":
-                datos, self.titulo_grafico.value, self.boton_volver.visible = self.datos_caj_proveedores, "Proveedores por Caja", True
-
-        elif self.modo_vista == "GASTOS":
-            if self.nivel_dona == "GENERAL":
-                datos, self.titulo_grafico.value, self.boton_volver.visible, es_clicable = self.datos_gen_gastos, "Total Gastos 2335", False, True
-            elif self.nivel_dona == "GASTOS OPERACIONALES (2335)":
-                datos, self.titulo_grafico.value, self.boton_volver.visible = self.datos_caj_gastos, "Egresos 2335 por Caja", True
-
-        elif self.modo_vista == "NOMINA":
-            if self.nivel_dona == "GENERAL":
-                datos, self.titulo_grafico.value, self.boton_volver.visible, es_clicable = self.datos_gen_nomina, "Nómina y Prestaciones (Aux 25)", False, False
-            elif self.nivel_dona == "NOMINA_POR_CAJA":
-                datos = self.datos_nomina_cajas
-                self.titulo_grafico.value = "Detalle Nómina por Caja"
-                self.boton_volver.visible = True
+        if self.nivel_dona == "GENERAL":
+            datos, self.titulo_grafico.value, self.boton_volver.visible, es_clicable = self.datos_gen_entidades, "Salidas (Bancos vs Caja)", False, True
+        elif self.nivel_dona == "BANCOS":
+            datos, self.titulo_grafico.value, self.boton_volver.visible = self.datos_ban_entidades, "Detalle Salidas Bancarias", True
+        elif self.nivel_dona == "CAJA":
+            datos, self.titulo_grafico.value, self.boton_volver.visible, es_clicable = self.datos_caj_entidades, "Detalle Salidas por Cajas", True, True
+        elif self.nivel_dona == "CATEGORIAS_CAJA":
+            datos = self.datos_caj_categorias.get(self.caja_seleccionada, {})
+            self.titulo_grafico.value = f"Egresos {self.caja_seleccionada.title()}"
+            self.boton_volver.visible, es_clicable = True, True
+        elif self.nivel_dona == "PROVEEDORES_CAJA":
+            datos = self.datos_caj_prov_detalle.get(self.caja_seleccionada, {})
+            self.titulo_grafico.value = f"Proveedores {self.caja_seleccionada.title()}"
+            self.boton_volver.visible = True
+        elif self.nivel_dona == "GASTOS_CAJA":
+            datos = self.datos_caj_gas_detalle.get(self.caja_seleccionada, {})
+            self.titulo_grafico.value = f"Gastos {self.caja_seleccionada.title()}"
+            self.boton_volver.visible = True
+        elif self.nivel_dona == "NOMINA_CAJA":
+            datos = self.datos_caj_nom_detalle.get(self.caja_seleccionada, {})
+            self.titulo_grafico.value = f"Nómina {self.caja_seleccionada.title()}"
+            self.boton_volver.visible = True
 
         datos = {k: v for k, v in datos.items() if v > 0}
         datos = dict(sorted(datos.items(), key=lambda x: x[1], reverse=True))
@@ -334,10 +132,8 @@ class GraficoEgresos(ft.Container):
         total = sum(datos.values()) if sum(datos.values()) > 0 else 1
         
         for i, (label, valor) in enumerate(datos.items()):
-            if self.modo_vista == "ENTIDADES":
-                if self.nivel_dona in ["CATEGORIAS_CAJA", "PROVEEDORES_CAJA", "GASTOS_CAJA"]: color = obtener_color_proveedor(label, i)
-                else: color = obtener_color(label, modo="ENTIDADES", nivel=self.nivel_dona)
-            else: color = obtener_color_proveedor(label, i)
+            if self.nivel_dona in ["CATEGORIAS_CAJA", "PROVEEDORES_CAJA", "GASTOS_CAJA", "NOMINA_CAJA"]: color = obtener_color_proveedor(label, i)
+            else: color = obtener_color(label, modo="ENTIDADES", nivel=self.nivel_dona)
             
             pct = (valor / total) * 100
             secciones.append(ft.PieChartSection(value=valor, color=color, radius=55, title=f"{pct:.0f}%" if pct >= 4 else "", title_style=ft.TextStyle(size=11, color=ft.colors.WHITE, weight=ft.FontWeight.BOLD)))
@@ -345,15 +141,14 @@ class GraficoEgresos(ft.Container):
             
             def crear_evento(cat_label):
                 def on_click(e):
-                    if self.modo_vista == "NOMINA" and self.nivel_dona == "GENERAL":
-                        self.nivel_dona = "NOMINA_POR_CAJA"
-                    elif self.nivel_dona == "GENERAL": self.nivel_dona = cat_label.upper()
+                    if self.nivel_dona == "GENERAL": self.nivel_dona = cat_label.upper()
                     elif self.nivel_dona == "CAJA":
                         self.nivel_dona = "CATEGORIAS_CAJA"
                         self.caja_seleccionada = cat_label.upper()
                     elif self.nivel_dona == "CATEGORIAS_CAJA":
                         if cat_label.upper() == "PROVEEDORES": self.nivel_dona = "PROVEEDORES_CAJA"
                         elif cat_label.upper() == "GASTOS OPERACIONALES": self.nivel_dona = "GASTOS_CAJA"
+                        elif cat_label.upper() in ["NÓMINA", "NOMINA"]: self.nivel_dona = "NOMINA_CAJA"
                     self.actualizar_dona_ui()
                 return on_click
             
@@ -389,12 +184,8 @@ class GraficoEgresos(ft.Container):
         self.tabla_detalle.rows = filas_tabla
         
         if self.on_nivel_change:
-            if self.modo_vista == "NOMINA":
-                estado_tendencia = "NOMINA"
-            elif self.nivel_dona in ["CATEGORIAS_CAJA", "PROVEEDORES_CAJA", "GASTOS_CAJA"]:
-                estado_tendencia = "DETALLE_CAJA"
-            else:
-                estado_tendencia = self.nivel_dona
+            # === AQUÍ ESTÁ LA CORRECCIÓN: PERMITIMOS EL PASO DE LOS NIVELES PROFUNDOS ===
+            estado_tendencia = "DETALLE_CAJA" if self.nivel_dona == "CATEGORIAS_CAJA" else self.nivel_dona
             self.on_nivel_change(estado_tendencia, self.caja_seleccionada)
             
         self.update_safe()

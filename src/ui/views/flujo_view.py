@@ -5,7 +5,6 @@ import os
 import sys
 import subprocess
 import polars as pl
-from datetime import datetime
 from src.data_engine.reports.flujo_efectivo import GeneradorFlujoEfectivo
 from src.ui.components.tarjeta_banco import TarjetaBanco
 from src.utils.file_loader import FileLoader
@@ -24,37 +23,30 @@ class FlujoView(ft.Container):
         self.pdf_processor = PdfProcessor()
         self.db_manager = DBManager()
 
-        # Pickers
         self.file_picker = ft.FilePicker(on_result=self.on_dialog_result)
         self.page.overlay.append(self.file_picker)
-
         self.save_picker = ft.FilePicker(on_result=self.on_save_result)
         self.page.overlay.append(self.save_picker)
-        
         self.pdf_picker = ft.FilePicker(on_result=self.on_pdf_result)
         self.page.overlay.append(self.pdf_picker)
-
         self.saldos_picker = ft.FilePicker(on_result=self.on_saldos_result)
         self.page.overlay.append(self.saldos_picker)
-
         self.gastos_picker = ft.FilePicker(on_result=self.on_gastos_result)
         self.page.overlay.append(self.gastos_picker)
-
         self.aux_prov_picker = ft.FilePicker(on_result=self.on_aux_prov_result)
         self.page.overlay.append(self.aux_prov_picker)
-        
         self.aux_nomina_picker = ft.FilePicker(on_result=self.on_aux_nomina_result)
         self.page.overlay.append(self.aux_nomina_picker)
 
-        # Estado interno
         self.acumulado_pdf_egresos = 0.0
+        self.acumulado_pdf_ingresos = 0.0
         self.rutas_archivos = {
             "bancolombia": None, "davivienda": None, "occidente": None,
             "agrario": None, "alianza": None, "caja": None, "caja_bancos": None
         }
         self.banco_actual_picker = None
         self.tipo_cargue = "mensual"
-        self.fecha_seleccionada = None
+        self.fechas_en_archivos = set()
 
         self.build_ui()
 
@@ -77,105 +69,66 @@ class FlujoView(ft.Container):
             self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.BLUE_800, color=ft.colors.WHITE)
             self.paso2_container.visible = True
             self.paso3_container.visible = True
-        
         self.page.update()
 
-    # ==========================================
-    # LÓGICA: CARGAR GASTOS 2335
-    # ==========================================
     def on_gastos_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            origen = e.files[0].path
-            exito = FileLoader.copy_to_cache(origen, "gastos_2335.xlsx")
-            self._mostrar_snack(
-                "✅ Base 2335 (Gastos) cargada exitosamente." if exito else "❌ Error al cargar Base 2335",
-                exito
-            )
+            exito = FileLoader.copy_to_cache(e.files[0].path, "gastos_2335.xlsx")
+            self._mostrar_snack("✅ Base 2335 (Gastos) cargada exitosamente." if exito else "❌ Error al cargar Base 2335", exito)
 
-    # ==========================================
-    # LÓGICA: CARGAR AUXILIAR PROVEEDORES 2205
-    # ==========================================
     def on_aux_prov_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            origen = e.files[0].path
-            exito = FileLoader.copy_to_cache(origen, "aux_prov_2205.xlsx")
-            self._mostrar_snack(
-                "✅ Auxiliar Proveedores (2205) cargado para Supply." if exito else "❌ Error al cargar Auxiliar 2205",
-                exito
-            )
+            exito = FileLoader.copy_to_cache(e.files[0].path, "aux_prov_2205.xlsx")
+            self._mostrar_snack("✅ Auxiliar Proveedores (2205) cargado para Supply." if exito else "❌ Error al cargar Auxiliar 2205", exito)
 
-    # ==========================================
-    # LÓGICA: CARGAR AUXILIAR NÓMINA 25
-    # ==========================================
     def on_aux_nomina_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
-            origen = e.files[0].path
-            exito = FileLoader.copy_to_cache(origen, "aux_nomina_25.xlsx")
-            self._mostrar_snack(
-                "✅ Auxiliar Nómina (25) cargado exitosamente." if exito else "❌ Error al cargar Auxiliar 25",
-                exito
-            )
+            exito = FileLoader.copy_to_cache(e.files[0].path, "aux_nomina_25.xlsx")
+            self._mostrar_snack("✅ Auxiliar Nómina (25) cargado exitosamente." if exito else "❌ Error al cargar Auxiliar 25", exito)
 
     def _mostrar_snack(self, mensaje: str, exitoso: bool):
-        self.page.snack_bar = ft.SnackBar(
-            ft.Text(mensaje), 
-            bgcolor=ft.colors.GREEN_700 if exitoso else ft.colors.RED_700
-        )
+        self.page.snack_bar = ft.SnackBar(ft.Text(mensaje), bgcolor=ft.colors.GREEN_700 if exitoso else ft.colors.RED_700)
         self.page.snack_bar.open = True
         self.page.update()
 
     def _abrir_archivo(self, ruta: str):
         try:
-            if sys.platform == "win32":
-                os.startfile(ruta)
-            elif sys.platform == "darwin":
-                subprocess.run(["open", ruta], check=True)
-            else:
-                subprocess.run(["xdg-open", ruta], check=True)
-        except Exception:
-            pass
+            if sys.platform == "win32": os.startfile(ruta)
+            elif sys.platform == "darwin": subprocess.run(["open", ruta], check=True)
+            else: subprocess.run(["xdg-open", ruta], check=True)
+        except: pass
 
-    # ==========================================
-    # LÓGICA DE AUTO-COMPLETADO DE SALDOS
-    # ==========================================
     def on_saldos_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             ruta = e.files[0].path
             try:
-                df = pl.read_excel(ruta)
+                import pandas as pd
+                df = pd.read_excel(ruta)
+                
                 col_banco = "Banco / Caja" if "Banco / Caja" in df.columns else "Origen"
                 col_saldo = "Saldo Inicial"
                 bancos_mapeados = 0
                 if col_saldo not in df.columns:
-                    self.page.snack_bar = ft.SnackBar(ft.Text(f"❌ No se encontró la columna '{col_saldo}' en el archivo."), bgcolor=ft.colors.RED_700)
-                    self.page.snack_bar.open = True
-                    self.page.update()
+                    self._mostrar_snack(f"❌ No se encontró la columna '{col_saldo}'", False)
                     return
-                for row in df.iter_rows(named=True):
+                
+                for index, row in df.iterrows():
                     nombre_banco_excel = str(row.get(col_banco, "")).strip().upper()
                     for b_id, tarjeta in self.tarjetas_bancos.items():
                         if b_id.upper() in nombre_banco_excel or nombre_banco_excel in b_id.upper():
-                            saldo_encontrado = float(row.get(col_saldo, 0.0))
-                            tarjeta.set_saldo(saldo_encontrado)
+                            tarjeta.set_saldo(float(row.get(col_saldo, 0.0)))
                             bancos_mapeados += 1
                             break
-                self.page.snack_bar = ft.SnackBar(ft.Text(f"✅ ¡Éxito! {bancos_mapeados} Saldos Iniciales extraídos correctamente."), bgcolor=ft.colors.GREEN_700)
+                self._mostrar_snack(f"✅ ¡Éxito! {bancos_mapeados} Saldos Iniciales extraídos.", True)
             except Exception as ex:
-                self.page.snack_bar = ft.SnackBar(ft.Text(f"❌ Error leyendo el archivo: {str(ex)}"), bgcolor=ft.colors.RED_700)
-            self.page.snack_bar.open = True
-            self.page.update()
+                self._mostrar_snack(f"❌ Error leyendo el archivo: {str(ex)}", False)
 
-    # ==========================================
-    # LÓGICA EXISTENTE DE ARCHIVOS
-    # ==========================================
     def on_dialog_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             ruta_seleccionada = e.files[0].path
             self.rutas_archivos[self.banco_actual_picker] = ruta_seleccionada
             self.tarjetas_bancos[self.banco_actual_picker].marcar_como_cargado()
-            self.page.snack_bar = ft.SnackBar(ft.Text(f"¡Extracto de {self.banco_actual_picker.upper()} cargado con éxito!"), bgcolor=ft.colors.GREEN_700)
-            self.page.snack_bar.open = True
-            self.page.update()
+            self._mostrar_snack(f"¡Extracto de {self.banco_actual_picker.upper()} cargado con éxito!", True)
 
     def abrir_selector(self, banco_id):
         self.banco_actual_picker = banco_id
@@ -187,9 +140,7 @@ class FlujoView(ft.Container):
     def on_pdf_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             es_perdida = self.switch_perdida.value
-            
             self._mostrar_snack("Escaneando PDFs... por favor espera.", True)
-            
             rutas = [archivo.path for archivo in e.files]
             resultado = self.pdf_processor.procesar_archivos(rutas, es_perdida)
             self.acumulado_pdf_ingresos = resultado["ingresos"]
@@ -202,7 +153,6 @@ class FlujoView(ft.Container):
                 self._mostrar_snack(f"✅ {resultado['archivos_procesados']} PDF(s) procesados. Valores {estado_msj} en memoria.", True)
             else:
                 self._mostrar_snack("❌ Error leyendo los PDFs. Revisa la clave o el formato.", False)
-            
             self.switch_perdida.value = False
 
     def limpiar_escaneo_pdf(self, e):
@@ -210,9 +160,7 @@ class FlujoView(ft.Container):
         self.acumulado_pdf_egresos = 0.0
         self.texto_pdf_resumen_ingresos.value = "$ 0.00"
         self.texto_pdf_resumen_egresos.value = "$ 0.00"
-        self.page.snack_bar = ft.SnackBar(ft.Text("🔄 Memoria del escáner reiniciada a cero."), bgcolor=ft.colors.BLUE_700)
-        self.page.snack_bar.open = True
-        self.page.update()
+        self._mostrar_snack("🔄 Memoria del escáner reiniciada a cero.", True)
 
     def procesar_flujo(self, e):
         if self.tipo_cargue == "diario":
@@ -221,63 +169,45 @@ class FlujoView(ft.Container):
             self._procesar_flujo_mensual(e)
 
     def _procesar_flujo_diario(self):
-        if not self.fecha_seleccionada:
-            self._mostrar_snack("Selecciona una fecha primero", False)
+        archivos_cargados = [ruta for ruta in self.rutas_archivos.values() if ruta is not None]
+        if not archivos_cargados:
+            self._mostrar_snack("⚠️ Carga al menos un archivo primero", False)
             return
 
-        faltantes = [b for b, ruta in self.rutas_archivos.items() if ruta is None]
-        if faltantes:
-            self._mostrar_snack(f"Faltan archivos: {', '.join(faltantes).upper()}", False)
-            return
-
+        self._mostrar_snack("Calculando flujo diario...", True)
         self.boton_generar.disabled = True
         self.boton_generar.text = "Guardando..."
         self.page.update()
 
         try:
-            from src.data_engine.extractors.bancolombia import BancolombiaExtractor
-            from src.data_engine.extractors.occidente import OccidenteExtractor
-            from src.data_engine.extractors.davivienda import DaviviendaExtractor
-            from src.data_engine.extractors.agrario import AgrarioExtractor
-            from src.data_engine.extractors.caja import CajaExtractor
-            from src.data_engine.extractors.alianza import AlianzaExtractor
-            from src.data_engine.extractors.caja_bancos import CajaBancosExtractor
+            saldos_dict = {}
+            for banco_id, tarjeta in self.tarjetas_bancos.items():
+                saldos_dict[banco_id.upper()] = tarjeta.obtener_saldo()
+                saldos_dict[banco_id.upper().replace("_", " ")] = tarjeta.obtener_saldo()
 
-            extractores = {
-                "BANCOLOMBIA": BancolombiaExtractor,
-                "OCCIDENTE": OccidenteExtractor,
-                "DAVIVIENDA": DaviviendaExtractor,
-                "AGRARIO": AgrarioExtractor,
-                "ALIANZA": AlianzaExtractor,
-                "CAJA": CajaExtractor,
-                "CAJA_BANCOS": CajaBancosExtractor
+            # === NUEVO: Capturamos los PDFs y valores manuales para que el diario cuadre ===
+            manual_ingresos = float(self.input_ingresos.value.replace("$", "").replace(",", "").strip() or 0)
+            manual_egresos = float(self.input_egresos.value.replace("$", "").replace(",", "").strip() or 0)
+            ajustes = {
+                "ALIANZA": {
+                    "ingresos": manual_ingresos + self.acumulado_pdf_ingresos,
+                    "egresos": manual_egresos + self.acumulado_pdf_egresos
+                }
             }
 
-            for banco_id, ruta in self.rutas_archivos.items():
-                if ruta:
-                    try:
-                        extractor_class = extractores.get(banco_id.upper())
-                        if extractor_class:
-                            extractor = extractor_class(ruta)
-                            df = extractor.process()
-                            
-                            if not df.is_empty:
-                                ingresos = float(df["Ingreso"].sum()) if "Ingreso" in df.columns else 0.0
-                                egresos = float(df["Egreso"].sum()) if "Egreso" in df.columns else 0.0
-                                
-                                self.db_manager.guardar_flujo_diario(
-                                    self.fecha_seleccionada,
-                                    banco_id.upper(),
-                                    ingresos,
-                                    egresos
-                                )
-                    except Exception as ex:
-                        pass
+            # Enviamos la variable `ajustes` al generador
+            motor = GeneradorFlujoEfectivo(self.rutas_archivos, ajustes_manuales=ajustes, saldos_iniciales=saldos_dict)
+            fechas_guardadas = motor.generar_y_guardar_flujo_diario()
 
-            self._mostrar_snack(f"✅ Flujo diario guardado para {self.fecha_seleccionada}", True)
-            self._resetear_formulario()
+            if fechas_guardadas > 0:
+                self._mostrar_snack(f"✅ Flujo diario guardado para {fechas_guardadas} fecha(s)", True)
+                self._resetear_formulario()
+            else:
+                self._mostrar_snack("❌ Los archivos no generaron datos válidos.", False)
 
         except Exception as ex:
+            import traceback
+            traceback.print_exc()
             self._mostrar_snack(f"Error: {str(ex)}", False)
         finally:
             self.boton_generar.disabled = False
@@ -288,7 +218,6 @@ class FlujoView(ft.Container):
         self.rutas_archivos = {k: None for k in self.rutas_archivos}
         for tarjeta in self.tarjetas_bancos.values():
             tarjeta.limpiar()
-        self.fecha_seleccionada = None
         self.page.update()
 
     def _procesar_flujo_mensual(self, e):
@@ -296,12 +225,10 @@ class FlujoView(ft.Container):
         if faltantes:
             self._mostrar_snack(f"⚠️ Faltan archivos por cargar: {', '.join(faltantes).upper()}", False)
             return
-            
         self.save_picker.save_file(dialog_title="¿Dónde deseas guardar el reporte consolidado?", file_name="Reporte_Flujo_Mensual.xlsx", allowed_extensions=["xlsx"])
 
     def on_save_result(self, e: ft.FilePickerResultEvent):
         if not e.path: return
-            
         self.boton_generar.text = "Calculando finanzas..."
         self.boton_generar.disabled = True
         self.page.update()
@@ -310,19 +237,14 @@ class FlujoView(ft.Container):
             manual_ingresos = float(self.input_ingresos.value.replace("$", "").replace(",", "").strip() or 0)
             manual_egresos = float(self.input_egresos.value.replace("$", "").replace(",", "").strip() or 0)
 
-            total_ingresos_alianza = manual_ingresos + self.acumulado_pdf_ingresos
-            total_egresos_alianza = manual_egresos + self.acumulado_pdf_egresos
-
             ajustes = {
                 "ALIANZA": {
-                    "ingresos": total_ingresos_alianza,
-                    "egresos": total_egresos_alianza
+                    "ingresos": manual_ingresos + self.acumulado_pdf_ingresos,
+                    "egresos": manual_egresos + self.acumulado_pdf_egresos
                 }
             }
             
-            saldos = {}
-            for banco_id, tarjeta in self.tarjetas_bancos.items():
-                saldos[banco_id.upper()] = tarjeta.obtener_saldo()
+            saldos = {banco_id.upper(): tarjeta.obtener_saldo() for banco_id, tarjeta in self.tarjetas_bancos.items()}
 
             motor = GeneradorFlujoEfectivo(self.rutas_archivos, ajustes_manuales=ajustes, saldos_iniciales=saldos)
             df_global = motor.generar_base_consolidada()
@@ -332,8 +254,7 @@ class FlujoView(ft.Container):
             os.makedirs("local_cache", exist_ok=True)
             df_global.write_parquet("local_cache/base_global.parquet")
             df_detallado.write_parquet("local_cache/base_detallada.parquet")
-            df_resumen_pl = pl.from_pandas(df_resumen)
-            df_resumen_pl.write_parquet("local_cache/base_resumen.parquet")
+            pl.from_pandas(df_resumen).write_parquet("local_cache/base_resumen.parquet")
 
             ruta_excel = e.path if e.path.endswith(".xlsx") else e.path + ".xlsx"
             motor.exportar_a_excel(df_detallado, df_resumen, ruta_excel)
@@ -353,8 +274,7 @@ class FlujoView(ft.Container):
             self.page.update()
             
         except Exception as ex:
-            self.page.snack_bar = ft.SnackBar(ft.Text(f"❌ Error interno: {str(ex)}"), bgcolor=ft.colors.RED_800)
-            self.page.snack_bar.open = True
+            self._mostrar_snack(f"❌ Error interno: {str(ex)}", False)
             self.boton_generar.text = "Generar Reporte Excel"
             self.boton_generar.disabled = False
             self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.BLUE_800, color=ft.colors.WHITE)
@@ -367,30 +287,11 @@ class FlujoView(ft.Container):
             ft.Divider(height=20, color=ft.colors.TRANSPARENT)
         ])
 
-        # Selector tipo de cargue
-        self.switch_mensual = ft.Switch(
-            label="Cargue Mensual", value=True,
-            on_change=lambda e: self.cambiar_tipo_cargue("mensual") if e.data == "true" else None
-        )
-        self.switch_diario = ft.Switch(
-            label="Cargue Diario", value=False,
-            on_change=lambda e: self.cambiar_tipo_cargue("diario") if e.data == "true" else None
-        )
+        self.switch_mensual = ft.Switch(label="Cargue Mensual", value=True, on_change=lambda e: self.cambiar_tipo_cargue("mensual") if e.data == "true" else None)
+        self.switch_diario = ft.Switch(label="Cargue Diario", value=False, on_change=lambda e: self.cambiar_tipo_cargue("diario") if e.data == "true" else None)
+        selector_tipo = ft.Container(content=ft.Row([self.switch_mensual, self.switch_diario], spacing=40), padding=15, bgcolor=ft.colors.BLUE_50, border_radius=10, border=ft.border.all(1, ft.colors.BLUE_200))
+        self.info_diario = ft.Container(content=ft.Text("Los datos diarios se generarán automáticamente desde la fecha de los extractos.", size=12, color=ft.colors.GREY_600), visible=False, padding=10, bgcolor=ft.colors.AMBER_50, border_radius=8)
 
-        selector_tipo = ft.Container(
-            content=ft.Row([self.switch_mensual, self.switch_diario], spacing=40),
-            padding=15, bgcolor=ft.colors.BLUE_50, border_radius=10,
-            border=ft.border.all(1, ft.colors.BLUE_200)
-        )
-
-        self.info_diario = ft.Container(
-            content=ft.Text("Los datos diarios se generarán automáticamente desde la fecha de los extractos.", size=12, color=ft.colors.GREY_600),
-            visible=False, padding=10, bgcolor=ft.colors.AMBER_50, border_radius=8
-        )
-
-        # ==========================================
-        # PASO 1: BANCOS PRINCIPALES
-        # ==========================================
         titulo_tarjetas = ft.Column([
             ft.Text("Paso 1: Extractos Bancarios y Cajas", size=18, weight=ft.FontWeight.W_800, color=ft.colors.BLUE_800),
             ft.Text("Carga obligatoriamente el Excel de cada cuenta principal.", size=13, color=ft.colors.GREY_600),
@@ -408,18 +309,12 @@ class FlujoView(ft.Container):
 
         lista_tarjetas = []
         for banco in bancos_config:
-            tarjeta = TarjetaBanco(
-                banco_id=banco["id"], nombre=banco["nombre"], color=banco["color"], 
-                on_cargar_click=self.abrir_selector, icono=banco["icon"], logo_path=banco["logo_path"] 
-            )
+            tarjeta = TarjetaBanco(banco_id=banco["id"], nombre=banco["nombre"], color=banco["color"], on_cargar_click=self.abrir_selector, icono=banco["icon"], logo_path=banco["logo_path"])
             self.tarjetas_bancos[banco["id"]] = tarjeta
             lista_tarjetas.append(tarjeta)
 
         grid_bancos = ft.Row(lista_tarjetas, wrap=True, spacing=20, run_spacing=20)
 
-        # ==========================================
-        # PASO 2: BASES AUXILIARES (CON NÓMINA)
-        # ==========================================
         titulo_auxiliares = ft.Column([
             ft.Text("Paso 2: Bases Auxiliares y Saldos (Opcional pero Recomendado)", size=18, weight=ft.FontWeight.W_800, color=ft.colors.BLUE_800),
             ft.Text("Sube aquí todos los libros auxiliares que alimentarán el desglose del reporte.", size=13, color=ft.colors.GREY_600),
@@ -432,14 +327,8 @@ class FlujoView(ft.Container):
             ft.ElevatedButton("Nómina (25)", icon=ft.icons.PEOPLE, style=ft.ButtonStyle(bgcolor=ft.colors.INDIGO_50, color=ft.colors.INDIGO_700), on_click=lambda e: self.aux_nomina_picker.pick_files(dialog_title="Selecciona el Auxiliar 25", allowed_extensions=["xlsx", "xls"]))
         ], wrap=True, spacing=15)
 
-        self.paso2_container = ft.Container(
-            content=botones_auxiliares, padding=20, bgcolor=ft.colors.WHITE, border_radius=10,
-            border=ft.border.all(1, ft.colors.GREY_200)
-        )
+        self.paso2_container = ft.Container(content=botones_auxiliares, padding=20, bgcolor=ft.colors.WHITE, border_radius=10, border=ft.border.all(1, ft.colors.GREY_200))
 
-        # ==========================================
-        # PASO 3: CONCILIACIONES EXTRAS
-        # ==========================================
         titulo_ajustes = ft.Column([
             ft.Text("Paso 3: Conciliaciones Extras (Alianza Fiduciaria)", size=18, weight=ft.FontWeight.W_800, color=ft.colors.BLUE_800),
             ft.Text("El sistema sumará inteligentemente lo que digites a mano MÁS lo que extraiga de los PDFs.", size=13, color=ft.colors.GREY_600),
@@ -467,7 +356,7 @@ class FlujoView(ft.Container):
             ])
         )
 
-        panel_ajustes = ft.Container(
+        self.paso3_container = ft.Container(
             bgcolor=ft.colors.WHITE, border_radius=15, padding=25, margin=ft.margin.only(top=10, bottom=30),
             border=ft.border.all(1, ft.colors.GREY_200), shadow=ft.BoxShadow(blur_radius=15, color=ft.colors.BLACK12, offset=ft.Offset(0, 5)),
             content=ft.Column([
@@ -481,8 +370,6 @@ class FlujoView(ft.Container):
             ])
         )
 
-        self.paso3_container = panel_ajustes
-
         titulo_generar = ft.Column([
             ft.Text("Paso 4: Generación del Reporte", size=18, weight=ft.FontWeight.W_800, color=ft.colors.BLUE_800, text_align=ft.TextAlign.CENTER),
             ft.Container(height=5)
@@ -491,10 +378,7 @@ class FlujoView(ft.Container):
         self.boton_generar = ft.ElevatedButton("Generar Reporte Excel", icon=ft.icons.PLAY_ARROW, height=60, width=400, style=ft.ButtonStyle(bgcolor=ft.colors.BLUE_800, color=ft.colors.WHITE, shape=ft.RoundedRectangleBorder(radius=10)), on_click=self.procesar_flujo)
 
         self.content = ft.Column([
-            header, 
-            selector_tipo,
-            self.info_diario,
-            ft.Divider(height=15, color=ft.colors.TRANSPARENT),
+            header, selector_tipo, self.info_diario, ft.Divider(height=15, color=ft.colors.TRANSPARENT),
             titulo_tarjetas, ft.Container(height=5), grid_bancos, ft.Divider(height=20, color=ft.colors.GREY_300),
             titulo_auxiliares, self.paso2_container, ft.Divider(height=20, color=ft.colors.GREY_300),
             titulo_ajustes, self.paso3_container, ft.Divider(height=20, color=ft.colors.TRANSPARENT),

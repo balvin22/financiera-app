@@ -56,8 +56,13 @@ class TarjetaBanco(ft.Container):
         self.update()
 
     def obtener_saldo(self) -> float:
-        val = self.input_saldo.value.replace("$", "").replace(",", "").strip()
-        return float(val) if val else 0.0
+        valor_campo = self.input_saldo.value
+        if valor_campo is None:
+            return 0.0
+        val = valor_campo.replace("$", "").replace(",", "").strip()
+        if not val:
+            return 0.0
+        return float(val)
 
     def set_saldo(self, valor: float):
         self.input_saldo.value = f"{valor:.2f}"

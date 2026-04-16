@@ -3,7 +3,7 @@ import polars as pl
 import pandas as pd
 import sqlite3
 import os
-import json
+import re
 
 class DataLoader:
     """Cargador de datos para el dashboard y reportes."""
@@ -53,19 +53,6 @@ class DataLoader:
         return pd.DataFrame()
     
     @staticmethod
-    def load_categorias_2335() -> dict:
-        df = DataLoader.load_excel(f"{DataLoader.CACHE_DIR}/gastos_2335.xlsx")
-        if df.empty:
-            return {}
-        
-        df.columns = df.columns.str.strip().str.upper()
-        if 'MCNCUENTA' in df.columns and 'MCNVALDEBI' in df.columns:
-            df['MCNVALDEBI'] = pd.to_numeric(df['MCNVALDEBI'], errors='coerce').fillna(0)
-            df_filtrado = df[df['MCNVALDEBI'] > 0]
-            return dict(df_filtrado.groupby('MCNCUENTA')['MCNVALDEBI'].sum())
-        return {}
-    
-    @staticmethod
     def load_proveedores() -> list:
         if os.path.exists(DataLoader.DB_PATH):
             try:
@@ -73,23 +60,71 @@ class DataLoader:
                     cursor = conn.cursor()
                     cursor.execute("SELECT nombre FROM proveedores")
                     return [row[0].strip().upper() for row in cursor.fetchall()]
-            except:
-                pass
+            except Exception as e:
+                print(f"Error cargando proveedores: {e}")
         return []
-    
+
     @staticmethod
-    def load_cajas_mapeo() -> dict:
+    def load_mapeos_caja() -> tuple:
+        """Retorna (mapeo_cajas_bd, mapeo_docs_caja)"""
+        mapeo_cajas = {}
+        mapeo_docs = {}
         if os.path.exists(DataLoader.DB_PATH):
             try:
                 with sqlite3.connect(DataLoader.DB_PATH) as conn:
                     cursor = conn.cursor()
-                    cursor.execute("SELECT codigo, recauda FROM centros_costos")
-                    mapeo = {}
+                    cursor.execute("SELECT codigo, recauda, docs FROM centros_costos")
                     for row in cursor.fetchall():
+                        cod_caja = str(row[0]).strip()
                         recauda = str(row[1]).strip().upper()
-                        if recauda and recauda not in ["", "NONE", "NAN"]:
-                            mapeo[str(row[0]).strip()] = recauda
-                    return mapeo
-            except:
-                pass
-        return {}
+                        docs_texto = str(row[2]).strip().upper()
+                        
+                        if recauda and recauda not in ["", "NONE", "NAN"]: 
+                            mapeo_cajas[cod_caja] = recauda
+                        if docs_texto and docs_texto not in ["", "NONE", "NAN"]:
+                            for p in re.findall(r'[A-Z]{2}\d{2}', docs_texto): 
+                                mapeo_docs[p] = recauda
+            except Exception as e:
+                print(f"Error cargando mapeos de caja: {e}")
+        return mapeo_cajas, mapeo_docs
+
+    @staticmethod
+    def load_cuentas_2335() -> dict:
+        """Carga el diccionario de cuentas para gastos."""
+        cuentas = {}
+        if os.path.exists(DataLoader.DB_PATH):
+            try:
+                with sqlite3.connect(DataLoader.DB_PATH) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT codigo, nombre FROM cuentas_2335")
+                    for row in cursor.fetchall():
+                        cuentas[str(row[0]).strip()] = str(row[1]).strip().title()
+            except Exception as e:
+                print(f"Error cargando cuentas 2335: {e}")
+        return cuentas
+
+    @staticmethod
+    def get_total_supply() -> float:
+        """Extrae el total de créditos supply del auxiliar 2205."""
+        df = DataLoader.load_excel(f"{DataLoader.CACHE_DIR}/aux_prov_2205.xlsx")
+        if not df.empty:
+            df.columns = df.columns.str.strip().str.upper()
+            if 'MCNDETALLE' in df.columns and 'MCNVALDEBI' in df.columns:
+                df['MCNVALDEBI'] = pd.to_numeric(df['MCNVALDEBI'], errors='coerce').fillna(0)
+                mask = df['MCNDETALLE'].astype(str).str.upper().str.contains('SUPPLY')
+                return float(df.loc[mask, 'MCNVALDEBI'].sum())
+        return 0.0
+
+    @staticmethod
+    def get_total_nomina_cajas() -> float:
+        """Extrae el total de nómina pagada por caja del auxiliar 25."""
+        df = DataLoader.load_excel(f"{DataLoader.CACHE_DIR}/aux_nomina_25.xlsx")
+        if not df.empty:
+            df.columns = df.columns.str.strip().str.upper()
+            if 'MCNVALDEBI' in df.columns:
+                df['MCNVALDEBI'] = pd.to_numeric(df['MCNVALDEBI'], errors='coerce').fillna(0)
+                col_doc = next((col for col in ['MCNTIPODOC', 'TIPO', 'TIPODOC'] if col in df.columns), None)
+                if col_doc:
+                    df_cajas = df[df[col_doc].astype(str).str.upper().str.startswith('ES')]
+                    return float(df_cajas['MCNVALDEBI'].sum())
+        return 0.0
