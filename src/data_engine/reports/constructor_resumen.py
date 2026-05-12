@@ -66,6 +66,7 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
 
     # 1. Cargar todas las dependencias estáticas y auxiliares
     proveedores_lista = DataLoader.load_proveedores()
+    codigos_proveedores = DataLoader.load_codigos_proveedores()
     dict_cuentas_2335 = DataLoader.load_cuentas_2335()
     mapeo_cajas_bd, mapeo_docs_caja = DataLoader.load_mapeos_caja()
     
@@ -118,9 +119,12 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
     salidas_bancos = df_bancos["Salidas_Operativas"].sum()
     salidas_caja = df_detallado.filter(pl.col("Origen") == "CAJA")["Salidas_Operativas"].sum()
     
-    if proveedores_lista:
+    if proveedores_lista or codigos_proveedores:
+        condicion_por_nombre = pl.col("Tercero").fill_null("").str.to_uppercase().str.strip_chars().is_in(proveedores_lista) if proveedores_lista else pl.lit(False)
+        condicion_por_codigo = pl.col("Codigo_Proveedor").fill_null("").is_in(codigos_proveedores) if codigos_proveedores else pl.lit(False)
+        
         condicion_proveedores = (
-            pl.col("Tercero").fill_null("").str.to_uppercase().str.strip_chars().is_in(proveedores_lista) &
+            (condicion_por_nombre | condicion_por_codigo) &
             (pl.col("Categoria_Flujo") != "Libranzas") &
             (pl.col("Categoria_Flujo") != "Seguridad Social")
         )
@@ -171,7 +175,11 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
     total_pagos_caja = df_prov_pagos_caja["Egreso"].sum()
     desglose_proveedores_caja = [{"Concepto": f"   > Prov Caja: {row['Tercero'].title()}", "Valor": row["Valor"]} for row in df_prov_pagos_caja.group_by("Tercero").agg(pl.col("Egreso").sum().alias("Valor")).sort("Valor", descending=True).iter_rows(named=True)]
 
-    df_prov_pagos_bancos = df_global.filter((pl.col("Origen") != "CAJA") & (pl.col("Egreso") != 0) & condicion_proveedores)
+    df_prov_pagos_bancos = df_global.filter(
+        (pl.col("Origen") == "CAJA_BANCOS") & 
+        (pl.col("Egreso") != 0) &
+        (pl.col("Codigo_Proveedor").is_in(codigos_proveedores))
+    )
     total_pagos_bancos = df_prov_pagos_bancos["Egreso"].sum()
     desglose_proveedores_bancos = [{"Concepto": f"   > Prov Banco: {row['Tercero'].title()}", "Valor": row["Valor"]} for row in df_prov_pagos_bancos.group_by("Tercero").agg(pl.col("Egreso").sum().alias("Valor")).sort("Valor", descending=True).iter_rows(named=True)]
 

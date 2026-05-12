@@ -37,12 +37,14 @@ class FlujoView(ft.Container):
         self.page.overlay.append(self.aux_prov_picker)
         self.aux_nomina_picker = ft.FilePicker(on_result=self.on_aux_nomina_result)
         self.page.overlay.append(self.aux_nomina_picker)
+        self.caja_bancos_picker = ft.FilePicker(on_result=self.on_caja_bancos_result)
+        self.page.overlay.append(self.caja_bancos_picker)
 
         self.acumulado_pdf_egresos = 0.0
         self.acumulado_pdf_ingresos = 0.0
         self.rutas_archivos = {
             "bancolombia": None, "davivienda": None, "occidente": None,
-            "agrario": None, "alianza": None, "caja": None, "caja_bancos": None
+            "agrario": None, "alianza": None, "caja": None
         }
         self.banco_actual_picker = None
         self.tipo_cargue = "mensual"
@@ -85,6 +87,11 @@ class FlujoView(ft.Container):
         if e.files and len(e.files) > 0:
             exito = FileLoader.copy_to_cache(e.files[0].path, "aux_nomina_25.xlsx")
             self._mostrar_snack("✅ Auxiliar Nómina (25) cargado exitosamente." if exito else "❌ Error al cargar Auxiliar 25", exito)
+
+    def on_caja_bancos_result(self, e: ft.FilePickerResultEvent):
+        if e.files and len(e.files) > 0:
+            exito = FileLoader.copy_to_cache(e.files[0].path, "caja_bancos.xlsx")
+            self._mostrar_snack("✅ Aux. caja bancos cargado exitosamente." if exito else "❌ Error al cargar Aux. caja bancos", exito)
 
     def _mostrar_snack(self, mensaje: str, exitoso: bool):
         self.page.snack_bar = ft.SnackBar(ft.Text(mensaje), bgcolor=ft.colors.GREEN_700 if exitoso else ft.colors.RED_700)
@@ -304,7 +311,6 @@ class FlujoView(ft.Container):
             {"id": "agrario", "nombre": "Banco Agrario", "color": ft.colors.GREEN_700, "logo_path": "src/assets/logos/agrario.svg", "icon": None},
             {"id": "alianza", "nombre": "Alianza Fid.", "color": ft.colors.TEAL_700, "logo_path": "src/assets/logos/alianza.jpeg", "icon": None},
             {"id": "caja", "nombre": "Caja General", "color": ft.colors.ORANGE_700, "logo_path": None, "icon": ft.icons.MONETIZATION_ON},
-            {"id": "caja_bancos", "nombre": "Mov. Bancos (Prov)", "color": ft.colors.PURPLE_700, "logo_path": None, "icon": ft.icons.RECEIPT_LONG}
         ]
 
         lista_tarjetas = []
@@ -324,7 +330,8 @@ class FlujoView(ft.Container):
             ft.ElevatedButton("Extraer Saldos Ant.", icon=ft.icons.AUTO_AWESOME, style=ft.ButtonStyle(bgcolor=ft.colors.BLUE_50, color=ft.colors.BLUE_700), on_click=lambda e: self.saldos_picker.pick_files(dialog_title="Selecciona el reporte del mes anterior", allowed_extensions=["xlsx"])),
             ft.ElevatedButton("Gastos (2335)", icon=ft.icons.RECEIPT_LONG, style=ft.ButtonStyle(bgcolor=ft.colors.PURPLE_50, color=ft.colors.PURPLE_700), on_click=lambda e: self.gastos_picker.pick_files(dialog_title="Selecciona el Auxiliar 2335", allowed_extensions=["xlsx", "xls"])),
             ft.ElevatedButton("Supply (2205)", icon=ft.icons.LOCAL_SHIPPING, style=ft.ButtonStyle(bgcolor=ft.colors.TEAL_50, color=ft.colors.TEAL_700), on_click=lambda e: self.aux_prov_picker.pick_files(dialog_title="Selecciona el Auxiliar 2205", allowed_extensions=["xlsx", "xls"])),
-            ft.ElevatedButton("Nómina (25)", icon=ft.icons.PEOPLE, style=ft.ButtonStyle(bgcolor=ft.colors.INDIGO_50, color=ft.colors.INDIGO_700), on_click=lambda e: self.aux_nomina_picker.pick_files(dialog_title="Selecciona el Auxiliar 25", allowed_extensions=["xlsx", "xls"]))
+            ft.ElevatedButton("Nómina (25)", icon=ft.icons.PEOPLE, style=ft.ButtonStyle(bgcolor=ft.colors.INDIGO_50, color=ft.colors.INDIGO_700), on_click=lambda e: self.aux_nomina_picker.pick_files(dialog_title="Selecciona el Auxiliar 25", allowed_extensions=["xlsx", "xls"])),
+            ft.ElevatedButton("Aux. caja bancos", icon=ft.icons.ACCOUNT_BALANCE_WALLET, style=ft.ButtonStyle(bgcolor=ft.colors.DEEP_ORANGE_50, color=ft.colors.DEEP_ORANGE_700), on_click=lambda e: self.caja_bancos_picker.pick_files(dialog_title="Selecciona el Auxiliar caja bancos", allowed_extensions=["xlsx", "xls"]))
         ], wrap=True, spacing=15)
 
         self.paso2_container = ft.Container(content=botones_auxiliares, padding=20, bgcolor=ft.colors.WHITE, border_radius=10, border=ft.border.all(1, ft.colors.GREY_200))

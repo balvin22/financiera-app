@@ -19,9 +19,12 @@ from .constructor_resumen import armar_resumen_gerencial
 
 class GeneradorFlujoEfectivo:
     def __init__(self, rutas_archivos: dict, ajustes_manuales: dict = None, saldos_iniciales: dict = None):
-        self.rutas = rutas_archivos
+        self.rutas = rutas_archivos.copy()
         self.ajustes = ajustes_manuales or {}
         self.saldos_iniciales = saldos_iniciales or {}
+        
+        if self.rutas.get("caja_bancos") is None and os.path.exists("local_cache/caja_bancos.xlsx"):
+            self.rutas["caja_bancos"] = "local_cache/caja_bancos.xlsx"
         
     def generar_base_consolidada(self) -> pl.DataFrame:
         print("Iniciando extracción y consolidación de datos...\n")

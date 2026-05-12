@@ -65,6 +65,18 @@ class DataLoader:
         return []
 
     @staticmethod
+    def load_codigos_proveedores() -> list:
+        if os.path.exists(DataLoader.DB_PATH):
+            try:
+                with sqlite3.connect(DataLoader.DB_PATH) as conn:
+                    cursor = conn.cursor()
+                    cursor.execute("SELECT codigo FROM proveedores WHERE codigo IS NOT NULL AND codigo != ''")
+                    return [str(row[0]) for row in cursor.fetchall()]
+            except Exception as e:
+                print(f"Error cargando códigos de proveedores: {e}")
+        return []
+
+    @staticmethod
     def load_mapeos_caja() -> tuple:
         """Retorna (mapeo_cajas_bd, mapeo_docs_caja)"""
         mapeo_cajas = {}

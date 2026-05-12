@@ -20,8 +20,11 @@ def build_main_window(page: ft.Page):
     
     area_trabajo = ft.Container(content=vista_flujo, expand=True)
 
+    vista_actual = ["generador"]
+
     def cambiar_vista(e):
         destino = e.control.data
+        vista_actual[0] = destino
         if destino == "generador":
             area_trabajo.content = vista_flujo
         elif destino == "dashboard":
@@ -35,14 +38,26 @@ def build_main_window(page: ft.Page):
             vista_graficos_diarios.build_ui()
             area_trabajo.content = vista_graficos_diarios
         
-        btn_gen.bgcolor = ft.colors.BLUE_800 if destino == "generador" else ft.colors.TRANSPARENT
-        btn_dash.bgcolor = ft.colors.BLUE_800 if destino == "dashboard" else ft.colors.TRANSPARENT
-        btn_maestros.bgcolor = ft.colors.BLUE_800 if destino == "maestros" else ft.colors.TRANSPARENT
-        btn_graficos_dia.bgcolor = ft.colors.BLUE_800 if destino == "graficos_diarios" else ft.colors.TRANSPARENT
+        actualizar_botones()
         page.update()
 
+    def actualizar_botones():
+        destino = vista_actual[0]
+        color_activo = ft.colors.DEEP_ORANGE_400
+        bg_activo = ft.colors.BLUE_GREY_800
+        
+        for btn, destino_btn in [(btn_gen, "generador"), (btn_dash, "dashboard"), (btn_maestros, "maestros"), (btn_graficos_dia, "graficos_diarios")]:
+            if destino == destino_btn:
+                btn.bgcolor = bg_activo
+                btn.leading.color = color_activo
+                btn.title.color = ft.colors.WHITE
+            else:
+                btn.bgcolor = ft.colors.TRANSPARENT
+                btn.leading.color = ft.colors.BLUE_GREY_400
+                btn.title.color = ft.colors.BLUE_GREY_300
+
     btn_gen = ft.ListTile(
-        leading=ft.Icon(ft.icons.ACCOUNT_TREE, color=ft.colors.WHITE),
+        leading=ft.Icon(ft.icons.ACCOUNT_TREE, color=ft.colors.BLUE_GREY_400),
         title=ft.Text("Generador de Reportes", color=ft.colors.WHITE, weight=ft.FontWeight.BOLD),
         bgcolor=ft.colors.BLUE_800,
         hover_color=ft.colors.BLUE_700,
@@ -50,24 +65,24 @@ def build_main_window(page: ft.Page):
     )
     
     btn_dash = ft.ListTile(
-        leading=ft.Icon(ft.icons.INSERT_CHART_OUTLINED, color=ft.colors.WHITE),
-        title=ft.Text("Dashboard Ejecutivo", color=ft.colors.WHITE, weight=ft.FontWeight.BOLD),
+        leading=ft.Icon(ft.icons.INSERT_CHART_OUTLINED, color=ft.colors.BLUE_GREY_400),
+        title=ft.Text("Dashboard Ejecutivo", color=ft.colors.BLUE_GREY_300, weight=ft.FontWeight.BOLD),
         bgcolor=ft.colors.TRANSPARENT,
         hover_color=ft.colors.BLUE_700,
         data="dashboard", on_click=cambiar_vista
     )
 
     btn_maestros = ft.ListTile(
-        leading=ft.Icon(ft.icons.STORAGE, color=ft.colors.WHITE),
-        title=ft.Text("Bases Maestras", color=ft.colors.WHITE, weight=ft.FontWeight.BOLD),
+        leading=ft.Icon(ft.icons.STORAGE, color=ft.colors.BLUE_GREY_400),
+        title=ft.Text("Bases Maestras", color=ft.colors.BLUE_GREY_300, weight=ft.FontWeight.BOLD),
         bgcolor=ft.colors.TRANSPARENT,
         hover_color=ft.colors.BLUE_700,
         data="maestros", on_click=cambiar_vista
     )
 
     btn_graficos_dia = ft.ListTile(
-        leading=ft.Icon(ft.icons.SHOW_CHART, color=ft.colors.WHITE),
-        title=ft.Text("Gráficos Diarios", color=ft.colors.WHITE, weight=ft.FontWeight.BOLD),
+        leading=ft.Icon(ft.icons.SHOW_CHART, color=ft.colors.BLUE_GREY_400),
+        title=ft.Text("Gráficos Diarios", color=ft.colors.BLUE_GREY_300, weight=ft.FontWeight.BOLD),
         bgcolor=ft.colors.TRANSPARENT,
         hover_color=ft.colors.BLUE_700,
         data="graficos_diarios", on_click=cambiar_vista
