@@ -9,7 +9,7 @@ class CajaBancosExtractor(BaseExtractor):
             if self.filepath.lower().endswith('.csv'):
                 pdf = pd.read_csv(self.filepath, sep=None, engine='python', encoding='latin1')
             else:
-                pdf = pd.read_excel(self.filepath, sheet_name="Mov")
+                pdf = pd.read_excel(self.filepath, sheet_name=0)
             
             pdf.columns = pdf.columns.str.strip().str.upper()
             

@@ -8,7 +8,7 @@ class OccidenteExtractor(BaseExtractor):
         try:
             # 1. El Puente: Usamos pandas y le decimos explícitamente que lea "Hoja1"
             # Esto evita que el código se rompa si alguien cambia el orden de las pestañas
-            pdf = pd.read_excel(self.filepath, sheet_name="Hoja1", skiprows=26)
+            pdf = pd.read_excel(self.filepath, sheet_name=0, skiprows=26)
             
             # Forzamos a que las columnas conflictivas sean estrictamente texto (strings)
             # para que PyArrow no colapse al encontrar números mezclados con letras.

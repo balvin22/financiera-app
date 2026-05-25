@@ -195,4 +195,4 @@ def procesar_datos_grafico_egresos():
                 elif resultados["datos_caj_categorias"][c].get("Proveedores", 0.0) >= exceso:
                     resultados["datos_caj_categorias"][c]["Proveedores"] -= exceso
 
-    return resultados
+    return resultados  

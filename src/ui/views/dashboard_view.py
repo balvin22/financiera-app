@@ -8,6 +8,7 @@ from src.ui.components.grafico_ingresos import GraficoIngresos
 from src.ui.components.grafico_egresos import GraficoEgresos
 from src.ui.components.tendencia_ingresos import TendenciaIngresos
 from src.ui.components.tendencia_egresos import TendenciaEgresos
+from src.ui.views.flujo_diario_graficos import FlujoDiarioGraficos
 from src.utils.data_loader import DataLoader
 
 class DashboardView(ft.Container):
@@ -17,7 +18,8 @@ class DashboardView(ft.Container):
         self.expand = True
         self.padding = 30 
         self.bgcolor = "#F8FAFC"
-        self.vista_activa = "INGRESOS" 
+        self.vista_activa = "INGRESOS"
+        self.vista_flujo_diario = FlujoDiarioGraficos(page)
         self.build_ui()
 
     def cambiar_vista(self, nueva_vista):
@@ -86,13 +88,8 @@ class DashboardView(ft.Container):
                     ft.Row([tendencia_egresos], alignment=ft.MainAxisAlignment.CENTER) 
                 ], spacing=0)
             else:
-                contenedor_grafico = ft.Container(
-                    content=ft.Column([
-                        ft.Icon(ft.icons.ACCOUNT_BALANCE_WALLET, size=60, color=ft.colors.BLUE_200),
-                        ft.Text("Resumen General de Cierre", size=20, weight=ft.FontWeight.BOLD, color=ft.colors.BLUE_900)
-                    ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
-                    bgcolor=ft.colors.WHITE, border_radius=12, padding=50, border=ft.border.all(1, ft.colors.GREY_200), expand=True, height=350
-                )
+                self.vista_flujo_diario.build_ui()
+                contenedor_grafico = self.vista_flujo_diario
 
             self.content = ft.ListView([
                 ft.Text("Dashboard Ejecutivo", size=24, weight=ft.FontWeight.W_900, color=ft.colors.BLUE_900),

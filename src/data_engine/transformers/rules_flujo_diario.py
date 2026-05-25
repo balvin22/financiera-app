@@ -2,56 +2,191 @@
 import sqlite3
 from collections import defaultdict
 
-def procesar_datos_flujo_diario(banco_seleccionado: str):
+def procesar_datos_flujo_diario(banco_seleccionado: str, mes_filtro: str = None, fecha_exacta: str = None):
     """
-    Motor contable: Extrae datos de SQLite, calcula el Saldo Inicial base 
-    y arrastra el flujo día a día (Running Balance).
+    Motor contable diario: Calcula la apertura real del mes y arrastra el saldo
+    utilizando un Libro Mayor Continuo (Running Balance) para evitar la pérdida
+    de saldos en días sin movimientos transaccionales.
+    
+    Args:
+        banco_seleccionado: "TODOS" o nombre del banco.
+        mes_filtro: Opcional, formato "YYYY-MM". Filtra solo las fechas de ese mes.
+        fecha_exacta: Opcional, formato "YYYY-MM-DD". Filtra a una fecha exacta (prioriza sobre mes_filtro).
     """
     with sqlite3.connect("local_cache/maestros.db") as conn:
         cursor = conn.cursor()
-        if banco_seleccionado == "TODOS":
-            cursor.execute("SELECT fecha, banco, saldo_inicial, ingresos, egresos FROM flujos_diarios")
+        
+        if fecha_exacta and not mes_filtro:
+            mes_filtro = fecha_exacta[:7]
+
+        # 1. CAPTURA DEL SALDO INICIAL REAL DE APERTURA DEL MES
+        if fecha_exacta:
+            if banco_seleccionado == "TODOS":
+                cursor.execute("""
+                    SELECT banco, saldo_inicial 
+                    FROM saldos_diarios 
+                    WHERE fecha = ?
+                """, (fecha_exacta,))
+                saldos_apertura = cursor.fetchall()
+                total_saldo_inicial = sum(float(row[1] or 0.0) for row in saldos_apertura)
+            else:
+                cursor.execute("""
+                    SELECT saldo_inicial 
+                    FROM saldos_diarios 
+                    WHERE banco = ? AND fecha = ?
+                """, (banco_seleccionado, fecha_exacta))
+                row = cursor.fetchone()
+                total_saldo_inicial = float(row[0] or 0.0) if row else 0.0
+        elif mes_filtro:
+            if banco_seleccionado == "TODOS":
+                cursor.execute("""
+                    SELECT banco, saldo_inicial 
+                    FROM saldos_diarios 
+                    WHERE fecha LIKE ? AND (banco, fecha) IN (
+                        SELECT banco, MIN(fecha) FROM saldos_diarios WHERE fecha LIKE ? GROUP BY banco
+                    )
+                """, (mes_filtro + '%', mes_filtro + '%'))
+                saldos_apertura = cursor.fetchall()
+                total_saldo_inicial = sum(float(row[1] or 0.0) for row in saldos_apertura)
+            else:
+                cursor.execute("""
+                    SELECT saldo_inicial 
+                    FROM saldos_diarios 
+                    WHERE banco = ? AND fecha LIKE ?
+                    ORDER BY fecha ASC LIMIT 1
+                """, (banco_seleccionado, mes_filtro + '%'))
+                row = cursor.fetchone()
+                total_saldo_inicial = float(row[0] or 0.0) if row else 0.0
         else:
-            cursor.execute("SELECT fecha, banco, saldo_inicial, ingresos, egresos FROM flujos_diarios WHERE banco = ?", (banco_seleccionado,))
-        raw_data = cursor.fetchall()
+            if banco_seleccionado == "TODOS":
+                cursor.execute("""
+                    SELECT banco, saldo_inicial 
+                    FROM saldos_diarios 
+                    WHERE (banco, fecha) IN (
+                        SELECT banco, MIN(fecha) FROM saldos_diarios GROUP BY banco
+                    )
+                """)
+                saldos_apertura = cursor.fetchall()
+                total_saldo_inicial = sum(float(row[1] or 0.0) for row in saldos_apertura)
+            else:
+                cursor.execute("""
+                    SELECT saldo_inicial 
+                    FROM saldos_diarios 
+                    WHERE banco = ? 
+                    ORDER BY fecha ASC LIMIT 1
+                """, (banco_seleccionado,))
+                row = cursor.fetchone()
+                total_saldo_inicial = float(row[0] or 0.0) if row else 0.0
 
-    if not raw_data:
-        return [], [], [], []
+        # 2. EXTRACCIÓN DE MOVIMIENTOS DETALLADOS PARA INGRESOS Y EGRESOS
+        cursor.execute("SELECT fecha, origen, concepto, ingreso, egreso, categoria_flujo FROM flujo_movimientos")
+        mov_raw = cursor.fetchall()
 
-    # 1. Obtenemos el Saldo Inicial "Base" (El más alto registrado por banco)
-    saldos_base = {}
-    for row in raw_data:
-        banco = row[1]
-        saldo = float(row[2]) if row[2] else 0.0
-        if banco not in saldos_base or saldo > saldos_base[banco]:
-            saldos_base[banco] = saldo
+    if not mov_raw:
+        # Respaldo por si la tabla de movimientos está limpia pero hay saldos registrados
+        with sqlite3.connect("local_cache/maestros.db") as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT DISTINCT fecha FROM saldos_diarios ORDER BY fecha ASC")
+            fechas_vacias = [r[0] for r in cursor.fetchall()]
+        if fechas_vacias:
+            zeros = [0.0] * len(fechas_vacias)
+            s_ini_arr = [total_saldo_inicial] * len(fechas_vacias)
+            return fechas_vacias, s_ini_arr, zeros, zeros, zeros, zeros, s_ini_arr
+        return [], [], [], [], [], [], []
+
+    # Estructura intermedia para clasificar la plata y aplicar puentes de traslados
+    movs = defaultdict(lambda: defaultdict(lambda: {
+        "ing_bruto": 0.0, "egr_bruto": 0.0, 
+        "ing_tras": 0.0, "egr_tras": 0.0,
+        "traslado_caja_cb": 0.0, "traslado_ali_occ": 0.0, "traslado_ali_ban": 0.0
+    }))
+
+    for fecha, origen, concepto, ingreso, egreso, cat in mov_raw:
+        if origen == "CAJA_BANCOS": continue
+        
+        d = movs[fecha][origen]
+        
+        # Regla especial Bancolombia
+        if origen == "BANCOLOMBIA" and "TRASL ENTRE FONDOS DE VALORES" in str(concepto).upper():
+            cat = "Traslado_Salida"
+            
+        ing = float(ingreso or 0.0)
+        egr = float(egreso or 0.0)
+        
+        d["ing_bruto"] += ing
+        d["egr_bruto"] += egr
+        
+        if "Traslado_Entrada" in cat or "Ajuste_Don_Diego" in cat:
+            d["ing_tras"] += ing
+            
+        if "Traslado_Salida" in cat:
+            d["egr_tras"] += egr
+            if origen == "CAJA":
+                d["traslado_caja_cb"] += egr
+            elif origen == "ALIANZA":
+                if "OCCIDENTE" in str(concepto).upper():
+                    d["traslado_ali_occ"] += egr
+                else:
+                    d["traslado_ali_ban"] += egr
+        elif cat == "Ajuste_Don_Diego":
+            d["egr_tras"] += ing
+
+    # Inyección de puentes contables de traslados entre cuentas
+    for fecha, bancos in movs.items():
+        caja_cb = bancos.get("CAJA", {}).get("traslado_caja_cb", 0.0)
+        ali_occ = bancos.get("ALIANZA", {}).get("traslado_ali_occ", 0.0)
+        ali_ban = bancos.get("ALIANZA", {}).get("traslado_ali_ban", 0.0)
+        
+        if "BANCOLOMBIA" in bancos:
+            bancos["BANCOLOMBIA"]["ing_tras"] = caja_cb + ali_ban
+        if "OCCIDENTE" in bancos:
+            bancos["OCCIDENTE"]["ing_tras"] += ali_occ
+
+    # Construcción de la línea de tiempo unificada
+    fechas_set = sorted(list(set(movs.keys())))
+    if fecha_exacta:
+        fechas_set = [f for f in fechas_set if f == fecha_exacta]
+    elif mes_filtro:
+        fechas_set = [f for f in fechas_set if f.startswith(mes_filtro)]
+    fechas, saldos_ini, ing_op, ing_tr, egr_op, egr_tr, saldos_fin = [], [], [], [], [], [], []
     
-    total_saldo_base = sum(saldos_base.values())
-
-    # 2. Agrupamos las transacciones (Ingresos/Egresos) por Día
-    transacciones_dia = defaultdict(lambda: {"ing": 0.0, "egr": 0.0})
-    for row in raw_data:
-        fecha = row[0]
-        transacciones_dia[fecha]["ing"] += float(row[3]) if row[3] else 0.0
-        transacciones_dia[fecha]["egr"] += float(row[4]) if row[4] else 0.0
-
-    # 3. Calculamos el Flujo en el Tiempo (Running Balance)
-    fechas_ordenadas = sorted(transacciones_dia.keys())
-    fechas, saldo_inicial_arr, ingresos_arr, egresos_arr = [], [], [], []
+    running_saldo = total_saldo_inicial
     
-    running_saldo = total_saldo_base
-    
-    for fecha in fechas_ordenadas:
+    for fecha in fechas_set:
+        dia_ing_op, dia_ing_tr, dia_egr_op, dia_egr_tr = 0.0, 0.0, 0.0, 0.0
+        tiene_datos_banco = False
+        
+        for b in movs[fecha].keys():
+            if banco_seleccionado != "TODOS" and b != banco_seleccionado: continue
+            
+            tiene_datos_banco = True
+            m = movs[fecha][b]
+            i_b, e_b = m["ing_bruto"], m["egr_bruto"]
+            i_t, e_t = m["ing_tras"], m["egr_tras"]
+            
+            dia_ing_op += (i_b - i_t)
+            dia_ing_tr += i_t
+            dia_egr_op += (e_b - e_t)
+            dia_egr_tr += e_t
+
+        # Si filtramos por un banco específico y ese día no registró actividad, saltamos la fecha
+        if banco_seleccionado != "TODOS" and not tiene_datos_banco:
+            continue
+
+        # Almacenamos el estado del día usando el balance acumulado continuo
         fechas.append(fecha)
-        saldo_inicial_arr.append(running_saldo)
+        saldos_ini.append(running_saldo)
+        ing_op.append(dia_ing_op)
+        ing_tr.append(dia_ing_tr)
+        egr_op.append(dia_egr_op)
+        egr_tr.append(dia_egr_tr)
         
-        ing = transacciones_dia[fecha]["ing"]
-        egr = transacciones_dia[fecha]["egr"]
+        # Balance neto diario para calcular el cierre
+        dia_neto = dia_ing_op + dia_ing_tr - dia_egr_op - dia_egr_tr
+        running_saldo_final = running_saldo + dia_neto
+        saldos_fin.append(running_saldo_final)
         
-        ingresos_arr.append(ing)
-        egresos_arr.append(egr)
-        
-        # Contabilidad pura: El saldo final de hoy es el inicial de mañana
-        running_saldo += (ing - egr)
+        # El saldo de cierre se convierte en la apertura del siguiente día de actividad
+        running_saldo = running_saldo_final
 
-    return fechas, saldo_inicial_arr, ingresos_arr, egresos_arr
+    return fechas, saldos_ini, ing_op, ing_tr, egr_op, egr_tr, saldos_fin

@@ -3,8 +3,6 @@ import flet as ft
 from src.ui.views.flujo_view import FlujoView
 from src.ui.views.dashboard_view import DashboardView
 from src.ui.views.maestros_view import MaestrosView
-from src.ui.views.flujo_diario_graficos import FlujoDiarioGraficos
-from src.core.db_manager import DBManager
 
 def build_main_window(page: ft.Page):
     page.title = "Consolidador Financiero - Flujo de Efectivo"
@@ -16,7 +14,6 @@ def build_main_window(page: ft.Page):
     vista_flujo = FlujoView(page)
     vista_dashboard = DashboardView(page)
     vista_maestros = MaestrosView(page)
-    vista_graficos_diarios = FlujoDiarioGraficos(page)
     
     area_trabajo = ft.Container(content=vista_flujo, expand=True)
 
@@ -33,10 +30,6 @@ def build_main_window(page: ft.Page):
         elif destino == "maestros":
             vista_maestros.cargar_datos()
             area_trabajo.content = vista_maestros
-        elif destino == "graficos_diarios":
-            vista_graficos_diarios.db_manager = DBManager()
-            vista_graficos_diarios.build_ui()
-            area_trabajo.content = vista_graficos_diarios
         
         actualizar_botones()
         page.update()
@@ -46,7 +39,7 @@ def build_main_window(page: ft.Page):
         color_activo = ft.colors.DEEP_ORANGE_400
         bg_activo = ft.colors.BLUE_GREY_800
         
-        for btn, destino_btn in [(btn_gen, "generador"), (btn_dash, "dashboard"), (btn_maestros, "maestros"), (btn_graficos_dia, "graficos_diarios")]:
+        for btn, destino_btn in [(btn_gen, "generador"), (btn_dash, "dashboard"), (btn_maestros, "maestros")]:
             if destino == destino_btn:
                 btn.bgcolor = bg_activo
                 btn.leading.color = color_activo
@@ -80,14 +73,6 @@ def build_main_window(page: ft.Page):
         data="maestros", on_click=cambiar_vista
     )
 
-    btn_graficos_dia = ft.ListTile(
-        leading=ft.Icon(ft.icons.SHOW_CHART, color=ft.colors.BLUE_GREY_400),
-        title=ft.Text("Gráficos Diarios", color=ft.colors.BLUE_GREY_300, weight=ft.FontWeight.BOLD),
-        bgcolor=ft.colors.TRANSPARENT,
-        hover_color=ft.colors.BLUE_700,
-        data="graficos_diarios", on_click=cambiar_vista
-    )
-
     sidebar = ft.Container(
         width=300, bgcolor=ft.colors.BLUE_GREY_900,
         padding=ft.padding.only(top=35, left=20, right=20, bottom=25),
@@ -103,7 +88,6 @@ def build_main_window(page: ft.Page):
             btn_gen,
             btn_dash,
             btn_maestros,
-            btn_graficos_dia,
             
             ft.Container(expand=True),
             ft.Divider(height=20, color=ft.colors.BLUE_GREY_700),

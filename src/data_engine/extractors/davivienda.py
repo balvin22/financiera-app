@@ -7,48 +7,67 @@ class DaviviendaExtractor(BaseExtractor):
     def process(self) -> pl.DataFrame:
         try:
             # 1. El Puente: Leemos la hoja "Mov" saltando las 2 filas de título
-            pdf = pd.read_excel(self.filepath, sheet_name="Mov", skiprows=2)
+            pdf = pd.read_excel(self.filepath, sheet_name=0, skiprows=2)
             
             # Limpiamos los nombres de columnas por si traen espacios
             pdf.columns = pdf.columns.str.strip()
             
-            # Nos quedamos estrictamente con las columnas que necesitamos
-            cols_utiles = ["Fecha","Tran", "Desc Mot.", "Doc.", "Ingreso", "Egreso"]
+            # ACTUALIZADO: Buscamos las nuevas columnas (Tran y Valor Total)
+            cols_utiles = ["Fecha", "Tran", "Desc Mot.", "Doc.", "Valor Total"]
             cols_presentes = [col for col in cols_utiles if col in pdf.columns]
             pdf = pdf[cols_presentes].copy()
             
-            # Esterilización extrema en Pandas
-            for col in cols_presentes:
-                if col in ["Ingreso", "Egreso"]:
-                    pdf[col] = pd.to_numeric(pdf[col], errors='coerce').fillna(0.0)
-                else:
-                    # Obligamos a que cualquier valor nulo sea un texto vacío y forzamos a string
+            # Esterilización en Pandas
+            if "Valor Total" in pdf.columns:
+                pdf["Valor Total"] = pd.to_numeric(pdf["Valor Total"], errors='coerce').fillna(0.0)
+            else:
+                pdf["Valor Total"] = 0.0
+
+            for col in ["Fecha", "Tran", "Desc Mot.", "Doc."]:
+                if col in pdf.columns:
                     pdf[col] = pdf[col].fillna("").astype(str)
                     
-            # --- EL BLINDAJE FINAL ---
-            # Le dictamos el esquema exacto a Polars para que no intente adivinar nada
+            # --- BLINDAJE DE ESQUEMA PARA POLARS ---
             esquema = {}
             if "Fecha" in pdf.columns: esquema["Fecha"] = pl.Utf8
+            if "Tran" in pdf.columns: esquema["Tran"] = pl.Utf8
             if "Desc Mot." in pdf.columns: esquema["Desc Mot."] = pl.Utf8
             if "Doc." in pdf.columns: esquema["Doc."] = pl.Utf8
-            if "Ingreso" in pdf.columns: esquema["Ingreso"] = pl.Float64
-            if "Egreso" in pdf.columns: esquema["Egreso"] = pl.Float64
+            if "Valor Total" in pdf.columns: esquema["Valor Total"] = pl.Float64
 
-            # 2. Pasamos a Polars usando el schema_overrides
+            # 2. Pasamos a Polars
             df = pl.from_pandas(pdf, schema_overrides=esquema)
 
-            # 3. LIMPIEZA Y ESTANDARIZACIÓN
+            # Evitar errores si falta alguna columna en el archivo original
+            if "Tran" not in df.columns: df = df.with_columns(pl.lit("").alias("Tran"))
+            if "Valor Total" not in df.columns: df = df.with_columns(pl.lit(0.0).alias("Valor Total"))
+
+            # 3. LIMPIEZA Y LÓGICA DE INGRESOS/EGRESOS
             df_clean = (
                 df
+                .with_columns([
+                    # LÓGICA DE NOTAS:
+                    # Si Tran contiene "Notas Credito" (o derivados), es Ingreso.
+                    pl.when(pl.col("Tran").str.contains(r"(?i)Notas\s*Cr[eé]dito"))
+                      .then(pl.col("Valor Total"))
+                      .otherwise(0.0)
+                      .alias("Ingreso"),
+                      
+                    # Si Tran contiene "Notas Debito" (o derivados), es Egreso.
+                    pl.when(pl.col("Tran").str.contains(r"(?i)Notas\s*D[eé]bito"))
+                      .then(pl.col("Valor Total").abs()) # Lo volvemos positivo
+                      .otherwise(0.0)
+                      .alias("Egreso")
+                ])
                 .select([
-                    # Extraemos los primeros 10 caracteres por si acaso (2025-11-30) y lo pasamos a Fecha
+                    # Extraemos los primeros 10 caracteres (YYYY-MM-DD)
                     pl.col("Fecha").str.slice(0, 10).str.to_date("%Y-%m-%d", strict=False).alias("Fecha"),
                     
                     pl.col("Desc Mot.").str.strip_chars().alias("Concepto"),
                     pl.col("Doc.").alias("Documento_Referencia"),
                     
-                    pl.col("Ingreso").alias("Ingreso"),
-                    pl.col("Egreso").alias("Egreso")
+                    pl.col("Ingreso"),
+                    pl.col("Egreso")
                 ])
                 .with_columns(pl.lit("DAVIVIENDA").alias("Origen"))
                 
@@ -68,31 +87,4 @@ class DaviviendaExtractor(BaseExtractor):
             
         except Exception as e:
             print(f"Error procesando Davivienda ({self.filepath}): {e}")
-            import traceback
-            traceback.print_exc() # Esto nos mostrará el error completo si vuelve a fallar
             return pl.DataFrame({"Fecha": [], "Concepto": [], "Documento_Referencia": [], "Ingreso": [], "Egreso": [], "Origen": [], "Categoria_Flujo": []})
-
-# ==========================================
-# Zona de Pruebas
-# ==========================================
-if __name__ == "__main__":
-    ruta_prueba = "c:/Users/usuario/Desktop/Financiera/2. Mov Davivienda Noviembre ARP.xls.xlsx"
-    
-    extractor = DaviviendaExtractor(ruta_prueba)
-    resultado = extractor.process()
-    
-    if not resultado.is_empty():
-        print("--- Muestra de Datos Limpios (Davivienda) ---")
-        print(resultado.head())
-        
-        # Validaciones Matemáticas
-        ingresos_totales = resultado["Ingreso"].sum()
-        egresos_operativos = resultado.filter(pl.col("Categoria_Flujo") == "Operacion_Normal")["Egreso"].sum()
-        traslados = resultado.filter(pl.col("Categoria_Flujo") == "Traslado_Salida")["Egreso"].sum()
-        
-        print("\n--- Validación de Cuadre ---")
-        print(f"Ingresos Totales:      {ingresos_totales:,.2f} <-- (Debe ser 434,448,292)")
-        print(f"Egresos Operativos:    {egresos_operativos:,.2f} <-- (Debe ser 110,186,141.60)")
-        print(f"Salidas por Traslados: {traslados:,.2f} <-- (Debe ser 234,690,000)")
-    else:
-        print("El DataFrame regresó vacío.")

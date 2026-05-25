@@ -7,7 +7,7 @@ class CajaExtractor(BaseExtractor):
     def process(self) -> pl.DataFrame:
         try:
             # 1. El Puente: Leemos la hoja "Mov" con Pandas
-            pdf = pd.read_excel(self.filepath, sheet_name="Mov")
+            pdf = pd.read_excel(self.filepath, sheet_name=0)
             
             # Limpiamos los nombres de columnas y aseguramos el formato de las fechas
             pdf.columns = pdf.columns.str.strip().str.upper()

@@ -6,12 +6,8 @@ from src.data_engine.extractors.base import BaseExtractor
 class AgrarioExtractor(BaseExtractor):
     def process(self) -> pl.DataFrame:
         try:
-            # 1. El Puente: Leemos la primera hoja ("Pag"), saltando 10 filas de encabezados inútiles
-            try:
-                pdf = pd.read_excel(self.filepath, sheet_name="Pag", skiprows=10)
-            except ValueError:
-                # Si por algún motivo le cambian el nombre a la hoja, leemos la primera por defecto
-                pdf = pd.read_excel(self.filepath, sheet_name=0, skiprows=10)
+            # 1. El Puente: Leemos la primera hoja (sin importar su nombre), saltando 10 filas de encabezados inútiles
+            pdf = pd.read_excel(self.filepath, sheet_name=0, skiprows=10)
             
             # Limpiamos los nombres de columnas
             pdf.columns = pdf.columns.str.strip()
