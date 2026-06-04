@@ -49,8 +49,8 @@ def calcular_detallado(movimientos_db, saldos_iniciales: dict, ajustes: dict) ->
             pl.col("Egreso").fill_null(0.0).sum().alias("Egresos_Brutos"),
             
             # Buscamos anuladas en INGRESOS
-            # pl.when(pl.col("Categoria_Flujo").fill_null("").str.to_uppercase().str.contains("ANULA"))
-            # .then(pl.col("Egreso")).otherwise(0.0).sum().alias("Anuladas_Ingreso"),
+            pl.when(pl.col("Categoria_Flujo").fill_null("").str.to_uppercase().str.contains("ANULA"))
+            .then(pl.col("Ingreso")).otherwise(0.0).sum().alias("Anuladas_Ingreso"),
             
             # Buscamos anuladas en EGRESOS
             pl.when(pl.col("Categoria_Flujo").fill_null("").str.to_uppercase().str.contains("ANULA"))
@@ -66,11 +66,11 @@ def calcular_detallado(movimientos_db, saldos_iniciales: dict, ajustes: dict) ->
             .otherwise(0.0).sum().alias("Salidas_por_Traslados")
         ])
         .with_columns(
-            # Restamos las anuladas del lado correcto para limpiar las operaciones
-            (pl.col("Ingresos_Brutos") - pl.col("Ingresos_de_Traslados") - pl.col("Anuladas_Egreso")).alias("Ingresos_Operativos"),
-            (pl.col("Egresos_Brutos") - pl.col("Salidas_por_Traslados") - pl.col("Anuladas_Egreso")).alias("Salidas_Operativas"),
-            # Unimos ambas anuladas para la columna del Excel
-            (pl.col("Anuladas_Egreso")).alias("Anulada")
+            # El total anulado se resta de ambos lados venga de Ingreso o de Egreso
+            (pl.col("Ingresos_Brutos") - pl.col("Ingresos_de_Traslados") - pl.col("Anuladas_Ingreso") - pl.col("Anuladas_Egreso")).alias("Ingresos_Operativos"),
+            (pl.col("Egresos_Brutos") - pl.col("Salidas_por_Traslados") - pl.col("Anuladas_Ingreso") - pl.col("Anuladas_Egreso")).alias("Salidas_Operativas"),
+            # Suma total anulada para la columna del Excel
+            (pl.col("Anuladas_Ingreso") + pl.col("Anuladas_Egreso")).alias("Anulada")
         )
     )
     

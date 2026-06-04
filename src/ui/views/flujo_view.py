@@ -1,15 +1,19 @@
 # ui/views/flujo_view.py
 import flet as ft
+import threading
 import time
 import os
 import sys
 import subprocess
+import pandas as pd
 import polars as pl
-from src.data_engine.reports.flujo_efectivo import GeneradorFlujoEfectivo
-from src.ui.components.tarjeta_banco import TarjetaBanco
-from src.utils.file_loader import FileLoader
-from src.utils.pdf_processor import PdfProcessor
+import sqlite3
 from src.core.db_manager import DBManager
+from src.data_engine.reports.flujo_efectivo import GeneradorFlujoEfectivo
+from src.utils.data_loader import DataLoader
+from src.utils.file_loader import FileLoader
+from src.ui.components.tarjeta_banco import TarjetaBanco
+from src.utils.pdf_processor import PdfProcessor
 
 class FlujoView(ft.Container):
     def __init__(self, page: ft.Page):
@@ -48,6 +52,7 @@ class FlujoView(ft.Container):
         }
         self.banco_actual_picker = None
         self.tipo_cargue = "mensual"
+        self.mes_mensual = None
         self.fechas_en_archivos = set()
 
         self.build_ui()
@@ -56,6 +61,13 @@ class FlujoView(ft.Container):
         self.tipo_cargue = tipo
         self.switch_mensual.value = (tipo == "mensual")
         self.switch_diario.value = (tipo == "diario")
+        self.selector_mes.visible = (tipo == "mensual")
+        if tipo == "mensual":
+            meses = DBManager().get_meses_disponibles()
+            self.selector_mes.options = [ft.dropdown.Option(m, m) for m in meses]
+            if meses:
+                self.mes_mensual = meses[-1]
+                self.selector_mes.value = meses[-1]
         
         if tipo == "diario":
             # --- MODO DIARIO: Guardar en BD ---
@@ -102,6 +114,25 @@ class FlujoView(ft.Container):
     def on_gastos_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             exito = FileLoader.copy_to_cache(e.files[0].path, "gastos_2335.xlsx")
+            if exito and self.mes_mensual:
+                try:
+                    df = pd.read_excel(e.files[0].path)
+                    df.columns = df.columns.str.strip().str.upper()
+                    if 'MCNTIPODOC' in df.columns and 'MCNNUMEDOC' in df.columns and 'MCNVALDEBI' in df.columns:
+                        mapeo = DataLoader.load_cuentas_2335()
+                        registros = []
+                        for _, row in df.iterrows():
+                            v = row.get('MCNVALDEBI')
+                            v = float(v) if pd.notna(v) and v else 0.0
+                            if v > 0:
+                                num = str(row.get('MCNNUMEDOC', '')).strip().replace('.0','')
+                                tipo = str(row.get('MCNTIPODOC', '')).strip()
+                                cuenta = str(row.get('MCNCUENTA', '')).strip()
+                                cat = mapeo.get(cuenta[:6] if len(cuenta)>=6 else cuenta, "Otros Gastos 2335")
+                                registros.append({"tipo_doc":tipo,"num_doc":num,"cuenta":cuenta,"categoria":cat,"valor":v,"detalle":str(row.get('MCNDETALLE',''))[:200]})
+                        DBManager().guardar_aux_gastos(self.mes_mensual, registros)
+                except:
+                    import traceback; traceback.print_exc()
             self._mostrar_snack("✅ Base 2335 (Gastos) cargada exitosamente." if exito else "❌ Error al cargar Base 2335", exito)
 
     def on_aux_prov_result(self, e: ft.FilePickerResultEvent):
@@ -112,6 +143,32 @@ class FlujoView(ft.Container):
     def on_aux_nomina_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
             exito = FileLoader.copy_to_cache(e.files[0].path, "aux_nomina_25.xlsx")
+            if exito and self.mes_mensual:
+                try:
+                    df = pd.read_excel(e.files[0].path)
+                    df.columns = df.columns.str.strip().str.upper()
+                    registros = []
+                    nomina_caja = {}
+                    mapeo_cajas, _ = DataLoader.load_mapeos_caja()
+                    for _, row in df.iterrows():
+                        v = row.get('MCNVALDEBI')
+                        v = float(v) if pd.notna(v) and v else 0.0
+                        if v > 0:
+                            num = str(row.get('MCNNUMEDOC', '')).strip().replace('.0','')
+                            tipo = str(row.get('MCNTIPODOC', '')).strip()
+                            cco = str(row.get('MCNCEDULA', '')).strip()
+                            empleado = str(row.get('MCNTRABAJADOR', row.get('MCNDETALLE',''))).strip().title()[:100]
+                            registros.append({"tipo_doc":tipo,"num_doc":num,"caja_codigo":cco,"caja_nombre":"","empleado":empleado,"valor":v,"detalle":str(row.get('MCNDETALLE',''))[:200]})
+                            if empleado:
+                                caja_nom = mapeo_cajas.get(cco[:5] if len(cco)>=5 else cco, "SIN CAJA")
+                                key = caja_nom.upper()
+                                if key not in nomina_caja: nomina_caja[key] = {"caja":key, "empleado":empleado, "valor":0}
+                                nomina_caja[key]["valor"] += v
+                    db = DBManager()
+                    db.guardar_aux_nomina(self.mes_mensual, registros)
+                    db.guardar_nomina_por_caja(self.mes_mensual, list(nomina_caja.values()))
+                except:
+                    import traceback; traceback.print_exc()
             self._mostrar_snack("✅ Auxiliar Nómina (25) cargado exitosamente." if exito else "❌ Error al cargar Auxiliar 25", exito)
 
     def on_caja_bancos_result(self, e: ft.FilePickerResultEvent):
@@ -129,7 +186,8 @@ class FlujoView(ft.Container):
             if sys.platform == "win32": os.startfile(ruta)
             elif sys.platform == "darwin": subprocess.run(["open", ruta], check=True)
             else: subprocess.run(["xdg-open", ruta], check=True)
-        except: pass
+        except Exception as e:
+            self._mostrar_snack(f"No se pudo abrir el archivo: {e}", False)
 
     def on_saldos_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:
@@ -202,7 +260,6 @@ class FlujoView(ft.Container):
             self._procesar_flujo_mensual(e)
 
     def _procesar_flujo_diario(self):
-        # Permite cargar diarios si hay AL MENOS un archivo excel o un PDF/Ajuste en memoria
         manual_ingresos = float(self.input_ingresos.value.replace("$", "").replace(",", "").strip() or 0)
         manual_egresos = float(self.input_egresos.value.replace("$", "").replace(",", "").strip() or 0)
         
@@ -213,13 +270,8 @@ class FlujoView(ft.Container):
             self._mostrar_snack("⚠️ Carga al menos un archivo Excel o PDF primero", False)
             return
 
-        # Verificar en la BD
-        import sqlite3
-        tiene_saldo_inicial = False
-        with sqlite3.connect("local_cache/maestros.db") as conn:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*) FROM saldos_diarios")
-            tiene_saldo_inicial = cursor.fetchone()[0] > 0
+        from src.core.db_manager import DBManager as _DB
+        tiene_saldo_inicial = _DB().tiene_saldos_diarios()
 
         if tiene_saldo_inicial:
             saldos_dict = {}
@@ -236,53 +288,61 @@ class FlujoView(ft.Container):
         self.boton_generar.text = "Guardando..."
         self.page.update()
 
-        try:
-            ajustes = {
-                "ALIANZA": {
-                    "ingresos": manual_ingresos + self.acumulado_pdf_ingresos,
-                    "egresos": manual_egresos + self.acumulado_pdf_egresos
+        def _ejecutar():
+            try:
+                ajustes = {
+                    "ALIANZA": {
+                        "ingresos": manual_ingresos + self.acumulado_pdf_ingresos,
+                        "egresos": manual_egresos + self.acumulado_pdf_egresos
+                    }
                 }
-            }
+                motor = GeneradorFlujoEfectivo(self.rutas_archivos, ajustes_manuales=ajustes, saldos_iniciales=saldos_dict)
+                fechas_guardadas = motor.generar_y_guardar_flujo_diario()
+                if self.page:
+                    if fechas_guardadas > 0:
+                        self._mostrar_snack(f"✅ Flujo diario guardado para {fechas_guardadas} fecha(s)", True)
+                        self._resetear_formulario(skip_update=True)
+                        self.limpiar_escaneo_pdf(None)
+                    else:
+                        self._mostrar_snack("❌ Los archivos no generaron datos válidos.", False)
+            except Exception as ex:
+                import traceback
+                traceback.print_exc()
+                if self.page:
+                    self._mostrar_snack(f"Error: {str(ex)}", False)
+            finally:
+                self.boton_generar.disabled = False
+                self.boton_generar.text = "Guardar Flujo Diario"
+                if self.page:
+                    self.page.update()
 
-            motor = GeneradorFlujoEfectivo(self.rutas_archivos, ajustes_manuales=ajustes, saldos_iniciales=saldos_dict)
-            fechas_guardadas = motor.generar_y_guardar_flujo_diario()
+        threading.Thread(target=_ejecutar, daemon=True).start()
 
-            if fechas_guardadas > 0:
-                self._mostrar_snack(f"✅ Flujo diario guardado para {fechas_guardadas} fecha(s)", True)
-                self._resetear_formulario()
-                self.limpiar_escaneo_pdf(None) # Limpia memoria de PDFs
-            else:
-                self._mostrar_snack("❌ Los archivos no generaron datos válidos.", False)
-
-        except Exception as ex:
-            import traceback
-            traceback.print_exc()
-            self._mostrar_snack(f"Error: {str(ex)}", False)
-        finally:
-            self.boton_generar.disabled = False
-            self.boton_generar.text = "Guardar Flujo Diario"
-            self.page.update()
-
-    def _resetear_formulario(self):
+    def _resetear_formulario(self, skip_update=False):
         self.rutas_archivos = {k: None for k in self.rutas_archivos}
         for tarjeta in self.tarjetas_bancos.values():
             tarjeta.limpiar()
-        self.page.update()
+        if not skip_update and self.page:
+            self.page.update()
 
     def _procesar_flujo_mensual(self, e):
-        import sqlite3
         try:
-            with sqlite3.connect("local_cache/maestros.db") as conn:
-                cursor = conn.cursor()
-                cursor.execute("SELECT COUNT(*) FROM flujo_movimientos")
-                if cursor.fetchone()[0] == 0:
-                    self._mostrar_snack("⚠️ La Base de Datos está vacía. Haz un Cargue Diario primero.", False)
-                    return
+            if not self.db_manager.tiene_movimientos():
+                self._mostrar_snack("⚠️ La Base de Datos está vacía. Haz un Cargue Diario primero.", False)
+                return
         except Exception:
             self._mostrar_snack("⚠️ Base de Datos no encontrada. Haz un Cargue Diario primero.", False)
             return
 
         self.save_picker.save_file(dialog_title="¿Dónde deseas guardar el reporte consolidado?", file_name="Reporte_Flujo_Mensual.xlsx", allowed_extensions=["xlsx"])
+
+    def _restaurar_boton_generar(self):
+        self.boton_generar.text = "Generar Reporte Excel"
+        self.boton_generar.icon = ft.icons.PLAY_ARROW
+        self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.BLUE_800, color=ft.colors.WHITE)
+        self.boton_generar.disabled = False
+        if self.page:
+            self.page.update()
 
     def on_save_result(self, e: ft.FilePickerResultEvent):
         if not e.path: return
@@ -290,42 +350,38 @@ class FlujoView(ft.Container):
         self.boton_generar.disabled = True
         self.page.update()
         
-        try:
-            # En mensual ya NO enviamos ajustes (viajan en la BD)
-            motor = GeneradorFlujoEfectivo(self.rutas_archivos, ajustes_manuales={}, saldos_iniciales={})
-            
-            df_global, df_detallado, df_resumen = motor.generar_mensual_desde_bd()
-            
-            os.makedirs("local_cache", exist_ok=True)
-            df_global.write_parquet("local_cache/base_global.parquet")
-            df_detallado.write_parquet("local_cache/base_detallada.parquet")
-            pl.from_pandas(df_resumen).write_parquet("local_cache/base_resumen.parquet")
+        ruta_excel = e.path if e.path.endswith(".xlsx") else e.path + ".xlsx"
+        
+        def _ejecutar_exportacion():
+            try:
+                motor = GeneradorFlujoEfectivo(self.rutas_archivos, ajustes_manuales={}, saldos_iniciales={})
+                df_global, df_detallado, df_resumen = motor.generar_mensual_desde_bd(mes_filtro=self.mes_mensual)
+                
+                os.makedirs("local_cache", exist_ok=True)
+                df_global.write_parquet("local_cache/base_global.parquet")
+                df_detallado.write_parquet("local_cache/base_detallada.parquet")
+                pl.from_pandas(df_resumen).write_parquet("local_cache/base_resumen.parquet")
 
-            ruta_excel = e.path if e.path.endswith(".xlsx") else e.path + ".xlsx"
-            motor.exportar_a_excel(df_detallado, df_resumen, ruta_excel)
-            
-            self.boton_generar.text = "¡Reporte Generado con Éxito!"
-            self.boton_generar.icon = ft.icons.CHECK_CIRCLE
-            self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.GREEN_600, color=ft.colors.WHITE)
-            self.page.update()
-            
-            self._abrir_archivo(ruta_excel)
-            
-            time.sleep(2.5) 
-            self.boton_generar.text = "Generar Reporte Excel"
-            self.boton_generar.icon = ft.icons.PLAY_ARROW
-            self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.BLUE_800, color=ft.colors.WHITE)
-            self.boton_generar.disabled = False 
-            self.page.update()
-            
-        except Exception as ex:
-            import traceback
-            traceback.print_exc()
-            self._mostrar_snack(f"❌ Error interno: {str(ex)}", False)
-            self.boton_generar.text = "Generar Reporte Excel"
-            self.boton_generar.disabled = False
-            self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.BLUE_800, color=ft.colors.WHITE)
-            self.page.update()
+                motor.exportar_a_excel(df_detallado, df_resumen, ruta_excel)
+                
+                self.boton_generar.text = "¡Reporte Generado con Éxito!"
+                self.boton_generar.icon = ft.icons.CHECK_CIRCLE
+                self.boton_generar.style = ft.ButtonStyle(bgcolor=ft.colors.GREEN_600, color=ft.colors.WHITE)
+                if self.page:
+                    self.page.update()
+                
+                self._abrir_archivo(ruta_excel)
+                
+                import threading
+                threading.Timer(2.5, self._restaurar_boton_generar).start()
+                
+            except Exception as ex:
+                import traceback
+                traceback.print_exc()
+                self._mostrar_snack(f"❌ Error interno: {str(ex)}", False)
+                self._restaurar_boton_generar()
+        
+        threading.Thread(target=_ejecutar_exportacion, daemon=True).start()
 
     def build_ui(self):
         header = ft.Column([
@@ -334,8 +390,12 @@ class FlujoView(ft.Container):
             ft.Divider(height=20, color=ft.colors.TRANSPARENT)
         ])
 
-        self.switch_mensual = ft.Switch(label="Cargue Mensual", value=False, on_change=lambda e: self.cambiar_tipo_cargue("mensual") if e.data == "true" else None)
-        self.switch_diario = ft.Switch(label="Cargue Diario", value=True, on_change=lambda e: self.cambiar_tipo_cargue("diario") if e.data == "true" else None)
+        self.switch_mensual = ft.Switch(label="Cargue Mensual", value=self.tipo_cargue == "mensual", on_change=lambda e: self.cambiar_tipo_cargue("mensual"))
+        self.switch_diario = ft.Switch(label="Cargue Diario", value=self.tipo_cargue == "diario", on_change=lambda e: self.cambiar_tipo_cargue("diario"))
+        self.selector_mes = ft.Dropdown(
+            label="Seleccionar mes", width=250, options=[], visible=self.tipo_cargue == "mensual",
+            on_change=lambda e: setattr(self, 'mes_mensual', e.control.value)
+        )
         selector_tipo = ft.Container(content=ft.Row([self.switch_mensual, self.switch_diario], spacing=40), padding=15, bgcolor=ft.colors.BLUE_50, border_radius=10, border=ft.border.all(1, ft.colors.BLUE_200))
         self.info_diario = ft.Container(content=ft.Text("Los datos diarios se guardarán directamente en la Base de Datos transaccional.", size=12, color=ft.colors.GREY_600), visible=False, padding=10, bgcolor=ft.colors.AMBER_50, border_radius=8)
 
@@ -450,12 +510,14 @@ class FlujoView(ft.Container):
 
         self.boton_generar = ft.ElevatedButton("...", height=60, width=400, style=ft.ButtonStyle(shape=ft.RoundedRectangleBorder(radius=10)), on_click=self.procesar_flujo)
 
+        # Sincronizar UI con el modo actual
+        self.cambiar_tipo_cargue(self.tipo_cargue)
+
         self.content = ft.Column([
-            header, selector_tipo, self.info_diario, ft.Divider(height=15, color=ft.colors.TRANSPARENT),
+            header, ft.Row([selector_tipo, ft.Container(width=15), self.selector_mes], vertical_alignment=ft.CrossAxisAlignment.CENTER),
+            self.info_diario, ft.Divider(height=15, color=ft.colors.TRANSPARENT),
             self.paso1_container, self.mensaje_bd,
             self.titulo_auxiliares, self.paso2_container, ft.Divider(height=20, color=ft.colors.TRANSPARENT),
             self.titulo_ajustes, self.paso3_container, ft.Divider(height=20, color=ft.colors.TRANSPARENT),
             ft.Column([titulo_generar, self.boton_generar], horizontal_alignment=ft.CrossAxisAlignment.CENTER), ft.Container(height=40)
         ], scroll=ft.ScrollMode.AUTO)
-
-        self.cambiar_tipo_cargue("diario")

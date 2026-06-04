@@ -11,25 +11,38 @@ def build_main_window(page: ft.Page):
     page.window_width = 1280 
     page.window_height = 800
 
-    vista_flujo = FlujoView(page)
+    vista_flujo = None
+    vista_dashboard = None
+    vista_maestros = None
     vista_dashboard = DashboardView(page)
-    vista_maestros = MaestrosView(page)
-    
-    area_trabajo = ft.Container(content=vista_flujo, expand=True)
+    area_trabajo = ft.Container(content=vista_dashboard, expand=True)
+    vista_actual = ["dashboard"]
 
-    vista_actual = ["generador"]
+    def _obtener_vista(nombre):
+        nonlocal vista_flujo, vista_dashboard, vista_maestros, page
+        if nombre == "generador":
+            if vista_flujo is None:
+                vista_flujo = FlujoView(page)
+            return vista_flujo
+        elif nombre == "dashboard":
+            if vista_dashboard is None:
+                vista_dashboard = DashboardView(page)
+            return vista_dashboard
+        elif nombre == "maestros":
+            if vista_maestros is None:
+                vista_maestros = MaestrosView(page)
+            return vista_maestros
+        return None
 
     def cambiar_vista(e):
         destino = e.control.data
         vista_actual[0] = destino
-        if destino == "generador":
-            area_trabajo.content = vista_flujo
-        elif destino == "dashboard":
-            vista_dashboard.build_ui()
-            area_trabajo.content = vista_dashboard
-        elif destino == "maestros":
-            vista_maestros.cargar_datos()
-            area_trabajo.content = vista_maestros
+        if destino == "dashboard":
+            vista = _obtener_vista(destino)
+            vista.refresh()
+            area_trabajo.content = vista
+        else:
+            area_trabajo.content = _obtener_vista(destino)
         
         actualizar_botones()
         page.update()
@@ -98,5 +111,6 @@ def build_main_window(page: ft.Page):
         ])
     )
 
+    actualizar_botones()
     layout = ft.Row([sidebar, area_trabajo], expand=True, spacing=0)
     page.add(layout)

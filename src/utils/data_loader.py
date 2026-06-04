@@ -10,12 +10,37 @@ class DataLoader:
     
     CACHE_DIR = "local_cache"
     DB_PATH = f"{CACHE_DIR}/maestros.db"
+    _cache_excel = {}
+    _cache_parquet = {}
+    _cache_proveedores = None
+    _cache_codigos_proveedores = None
+    _cache_mapeos_caja = None
+    _cache_cuentas_2335 = None
+
+    @staticmethod
+    def get_last_update() -> str:
+        """Retorna la fecha de modificación del parquet más reciente."""
+        from datetime import datetime
+        max_mtime = 0.0
+        for fname in ["base_resumen.parquet", "base_global.parquet", "base_detallada.parquet"]:
+            ruta = os.path.join(DataLoader.CACHE_DIR, fname)
+            if os.path.exists(ruta):
+                mtime = os.path.getmtime(ruta)
+                if mtime > max_mtime:
+                    max_mtime = mtime
+        if max_mtime > 0:
+            return datetime.fromtimestamp(max_mtime).strftime("%d/%m/%Y %I:%M %p")
+        return "—"
     
     @staticmethod
     def load_parquet(nombre: str) -> pl.DataFrame:
+        if nombre in DataLoader._cache_parquet:
+            return DataLoader._cache_parquet[nombre]
         ruta = os.path.join(DataLoader.CACHE_DIR, f"{nombre}.parquet")
         if os.path.exists(ruta):
-            return pl.read_parquet(ruta)
+            df = pl.read_parquet(ruta)
+            DataLoader._cache_parquet[nombre] = df
+            return df
         return pl.DataFrame()
     
     @staticmethod
@@ -48,37 +73,51 @@ class DataLoader:
     
     @staticmethod
     def load_excel(ruta: str) -> pd.DataFrame:
+        if ruta in DataLoader._cache_excel:
+            return DataLoader._cache_excel[ruta]
         if os.path.exists(ruta):
-            return pd.read_excel(ruta)
+            df = pd.read_excel(ruta)
+            DataLoader._cache_excel[ruta] = df
+            return df
         return pd.DataFrame()
     
     @staticmethod
     def load_proveedores() -> list:
+        if DataLoader._cache_proveedores is not None:
+            return DataLoader._cache_proveedores
+        resultado = []
         if os.path.exists(DataLoader.DB_PATH):
             try:
                 with sqlite3.connect(DataLoader.DB_PATH) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT nombre FROM proveedores")
-                    return [row[0].strip().upper() for row in cursor.fetchall()]
+                    resultado = [row[0].strip().upper() for row in cursor.fetchall()]
             except Exception as e:
                 print(f"Error cargando proveedores: {e}")
-        return []
+        DataLoader._cache_proveedores = resultado
+        return resultado
 
     @staticmethod
     def load_codigos_proveedores() -> list:
+        if DataLoader._cache_codigos_proveedores is not None:
+            return DataLoader._cache_codigos_proveedores
+        resultado = []
         if os.path.exists(DataLoader.DB_PATH):
             try:
                 with sqlite3.connect(DataLoader.DB_PATH) as conn:
                     cursor = conn.cursor()
                     cursor.execute("SELECT codigo FROM proveedores WHERE codigo IS NOT NULL AND codigo != ''")
-                    return [str(row[0]) for row in cursor.fetchall()]
+                    resultado = [str(row[0]) for row in cursor.fetchall()]
             except Exception as e:
                 print(f"Error cargando códigos de proveedores: {e}")
-        return []
+        DataLoader._cache_codigos_proveedores = resultado
+        return resultado
 
     @staticmethod
     def load_mapeos_caja() -> tuple:
         """Retorna (mapeo_cajas_bd, mapeo_docs_caja)"""
+        if DataLoader._cache_mapeos_caja is not None:
+            return DataLoader._cache_mapeos_caja
         mapeo_cajas = {}
         mapeo_docs = {}
         if os.path.exists(DataLoader.DB_PATH):
@@ -98,11 +137,14 @@ class DataLoader:
                                 mapeo_docs[p] = recauda
             except Exception as e:
                 print(f"Error cargando mapeos de caja: {e}")
+        DataLoader._cache_mapeos_caja = (mapeo_cajas, mapeo_docs)
         return mapeo_cajas, mapeo_docs
 
     @staticmethod
     def load_cuentas_2335() -> dict:
         """Carga el diccionario de cuentas para gastos."""
+        if DataLoader._cache_cuentas_2335 is not None:
+            return DataLoader._cache_cuentas_2335
         cuentas = {}
         if os.path.exists(DataLoader.DB_PATH):
             try:
@@ -113,6 +155,7 @@ class DataLoader:
                         cuentas[str(row[0]).strip()] = str(row[1]).strip().title()
             except Exception as e:
                 print(f"Error cargando cuentas 2335: {e}")
+        DataLoader._cache_cuentas_2335 = cuentas
         return cuentas
 
     @staticmethod

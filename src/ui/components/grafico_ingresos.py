@@ -1,55 +1,45 @@
 # ui/components/grafico_ingresos.py
 import flet as ft
 import polars as pl
-import pandas as pd
-import json
+import re
+from src.core.db_manager import DBManager
 from src.core.mapeos import obtener_color_ingresos
+from src.core.logger import app_logger
+from src.utils.data_loader import DataLoader
+from src.ui.components.base_grafico import BaseGrafico, TEMA_INGRESOS
 
-class GraficoIngresos(ft.Container):
-    # --- NUEVO: Recibimos una función para avisar cuando cambie el nivel ---
-    def __init__(self, on_nivel_change=None):
-        super().__init__()
-        self.on_nivel_change = on_nivel_change 
-        
-        self.expand = True
-        self.height = 350
-        self.bgcolor = ft.colors.WHITE
-        self.border_radius = 12
-        self.padding = 20
-        self.border = ft.border.all(1, ft.colors.GREY_200)
-
-        self.nivel_dona = "GENERAL"
+class GraficoIngresos(BaseGrafico):
+    def __init__(self, banco="TODOS", mes=None, on_nivel_change=None):
+        super().__init__(on_nivel_change=on_nivel_change, banco=banco, mes=mes)
         self.datos_general = {}
         self.datos_bancos = {}
         self.datos_caja = {}
-        self.datos_hover = [] 
-        
-        self.dona_grafico = ft.PieChart(
-            sections=[], 
-            sections_space=2, 
-            center_space_radius=35,
-            on_chart_event=self.on_hover_dona 
-        )
-        
-        self.texto_hover = ft.Text("Apunta al gráfico para detalles", size=11, color=ft.colors.GREY_400, text_align=ft.TextAlign.CENTER)
-        self.leyenda_contenedor = ft.Column(scroll=ft.ScrollMode.ALWAYS, spacing=5)
-        self.titulo_grafico = ft.Text("Distribución de Ingresos", weight=ft.FontWeight.BOLD, size=16, color=ft.colors.BLUE_900)
-        self.boton_volver = ft.ElevatedButton("← Volver", on_click=self.volver_dona, visible=False, style=ft.ButtonStyle(color=ft.colors.BLUE_700, bgcolor=ft.colors.BLUE_50, padding=10))
-
-        self.tabla_detalle = ft.DataTable(
-            columns=[
-                ft.DataColumn(ft.Text("Concepto", size=12, weight=ft.FontWeight.BOLD, color=ft.colors.BLUE_900)),
-                ft.DataColumn(ft.Text("%", size=12, weight=ft.FontWeight.BOLD, color=ft.colors.BLUE_900)),
-                ft.DataColumn(ft.Text("Valor", size=12, weight=ft.FontWeight.BOLD, color=ft.colors.BLUE_900))
-            ],
-            rows=[],
-            column_spacing=15,
-            heading_row_color=ft.colors.BLUE_50
-        )
-
         self.extraer_datos_grafico()
-        self.construir_ui()
         self.actualizar_dona_ui()
+
+    def _get_tema_colores(self):
+        return TEMA_INGRESOS
+
+    def _obtener_color(self, label, idx):
+        return obtener_color_ingresos(label, self.nivel_dona)
+
+    def _get_datos_nivel(self):
+        if self.nivel_dona == "GENERAL":
+            return self.datos_general
+        elif self.nivel_dona == "BANCOS":
+            return self.datos_bancos
+        elif self.nivel_dona == "CAJA":
+            return dict(sorted(self.datos_caja.items(), key=lambda x: x[1], reverse=True))
+        return {}
+
+    def _get_titulo_para_nivel(self):
+        if self.nivel_dona == "GENERAL":
+            return "Ingresos (Bancos vs Caja)"
+        elif self.nivel_dona == "BANCOS":
+            return "Detalle Ingresos Bancarios"
+        elif self.nivel_dona == "CAJA":
+            return "Detalle Ingresos por Cajas"
+        return self.nivel_dona.replace("_", " ").title()
 
     def construir_ui(self):
         self.content = ft.Column([
@@ -68,76 +58,56 @@ class GraficoIngresos(ft.Container):
                     content=ft.Column([self.tabla_detalle], scroll=ft.ScrollMode.AUTO),
                     expand=True,
                     height=260,
-                    border=ft.border.only(left=ft.border.BorderSide(1, ft.colors.GREY_200)), 
+                    border=ft.border.only(left=ft.border.BorderSide(1, ft.colors.GREY_200)),
                     padding=ft.padding.only(left=20)
                 )
-            ], vertical_alignment=ft.CrossAxisAlignment.START) 
+            ], vertical_alignment=ft.CrossAxisAlignment.START)
         ])
 
-    def extraer_datos_grafico(self):
-        try:
-            df_res = pl.read_parquet("local_cache/base_resumen.parquet").to_pandas()
-            try:
-                self.datos_general = {
-                    "Bancos": df_res.loc[df_res['Concepto'] == 'Total Ingresos x Bancos', 'Valor'].values[0],
-                    "Caja": df_res.loc[df_res['Concepto'] == 'Total Ingresos x Caja', 'Valor'].values[0]
-                }
-            except: pass
-
-            try:
-                idx_start = df_res.index[df_res['Concepto'] == 'DETALLE DE INGRESOS BANCARIOS'][0]
-                idx_end = df_res.index[df_res['Concepto'] == 'Total Ingresos x Bancos'][0]
-                for _, row in df_res.iloc[idx_start+1 : idx_end].iterrows():
-                    if pd.notna(row['Valor']) and row['Valor'] > 0:
-                        self.datos_bancos[str(row['Concepto']).replace("Ingresos ", "")] = row['Valor']
-            except: pass
-
-            try:
-                idx_start = df_res.index[df_res['Concepto'] == 'DETALLE DE INGRESOS POR CAJA'][0]
-                idx_end = df_res.index[df_res['Concepto'] == 'Total Ingresos x Caja'][0]
-                for _, row in df_res.iloc[idx_start+1 : idx_end].iterrows():
-                    if pd.notna(row['Valor']) and row['Valor'] > 0:
-                        nombre = str(row['Concepto']).replace("   > C.C: ", "").replace("   > ", "")
-                        self.datos_caja[nombre] = row['Valor']
-            except: pass
-        except: pass
-
-    def volver_dona(self, e):
-        self.nivel_dona = "GENERAL"
-        self.actualizar_dona_ui()
-
     def actualizar_dona_ui(self):
-        datos = {}
-        if self.nivel_dona == "GENERAL":
-            datos = self.datos_general
-            self.titulo_grafico.value = "Ingresos (Bancos vs Caja)"
-            self.boton_volver.visible = False
-        elif self.nivel_dona == "BANCOS":
-            datos = self.datos_bancos
-            self.titulo_grafico.value = "Detalle Ingresos Bancarios"
-            self.boton_volver.visible = True
-        elif self.nivel_dona == "CAJA":
-            datos = dict(sorted(self.datos_caja.items(), key=lambda x: x[1], reverse=True))
-            self.titulo_grafico.value = "Detalle Ingresos por Cajas"
-            self.boton_volver.visible = True
+        datos = self._get_datos_nivel()
+        if not datos or all(v == 0 for v in datos.values()):
+            self.dona_grafico.sections = []
+            self.leyenda_contenedor.controls = [
+                ft.Container(
+                    content=ft.Column([
+                        ft.Icon(ft.icons.INFO_OUTLINE, size=30, color=ft.colors.GREY_400),
+                        ft.Text("No hay datos para esta selección", size=14, color=ft.colors.GREY_500, weight=ft.FontWeight.W_500),
+                    ], alignment=ft.MainAxisAlignment.CENTER, horizontal_alignment=ft.CrossAxisAlignment.CENTER),
+                    alignment=ft.alignment.center, expand=True, height=200
+                )
+            ]
+            self.tabla_detalle.rows = [
+                ft.DataRow(cells=[
+                    ft.DataCell(ft.Text("—", size=11, color=ft.colors.GREY_400)),
+                    ft.DataCell(ft.Text("—", size=11, color=ft.colors.GREY_400)),
+                    ft.DataCell(ft.Text("—", size=11, color=ft.colors.GREY_400)),
+                ])
+            ]
+            self.texto_hover.value = "Sin datos disponibles"
+            self.texto_hover.color = ft.colors.GREY_400
+            self.titulo_grafico.value = self._get_titulo_para_nivel()
+            self.boton_volver.visible = self.nivel_dona != "GENERAL"
+            self.update_safe()
+            return
 
         secciones = []
         leyenda_items = []
         filas_tabla = []
         self.datos_hover = []
-        
+
         total = sum(datos.values()) if sum(datos.values()) > 0 else 1
-        
+
         for i, (label, valor) in enumerate(datos.items()):
-            color = obtener_color_ingresos(label, self.nivel_dona)
+            color = self._obtener_color(label, i)
             pct = (valor / total) * 100
-            
+
             secciones.append(
-                ft.PieChartSection(value=valor, color=color, radius=55, title=f"{pct:.0f}%" if pct >= 4 else "", 
+                ft.PieChartSection(value=valor, color=color, radius=55, title=f"{pct:.0f}%" if pct >= 4 else "",
                                    title_style=ft.TextStyle(size=11, color=ft.colors.WHITE, weight=ft.FontWeight.BOLD))
             )
             self.datos_hover.append({"label": label, "valor": valor, "pct": pct, "color": color})
-            
+
             def crear_evento(cat_label):
                 def on_click(e):
                     if self.nivel_dona == "GENERAL":
@@ -146,71 +116,130 @@ class GraficoIngresos(ft.Container):
                 return on_click
 
             es_clicable = self.nivel_dona == "GENERAL"
+            tema = self._get_tema_colores()
             leyenda_items.append(
                 ft.Container(
                     content=ft.Row([
                         ft.Container(width=10, height=10, border_radius=5, bgcolor=color),
                         ft.Column([
-                            ft.Text(label + (" (Clic aquí)" if es_clicable else ""), size=11, weight=ft.FontWeight.BOLD, color=ft.colors.BLUE_900),
+                            ft.Text(label + (" (Clic aquí)" if es_clicable else ""), size=11, weight=ft.FontWeight.BOLD, color=tema["primary"]),
                             ft.Text(f"$ {valor:,.2f}", size=11, color=ft.colors.GREY_600)
-                        ], spacing=1, expand=True) 
+                        ], spacing=1, expand=True)
                     ], vertical_alignment=ft.CrossAxisAlignment.CENTER),
                     on_click=crear_evento(label) if es_clicable else None,
-                    padding=5, border_radius=5, height=45 
+                    padding=5, border_radius=5, height=45
                 )
             )
 
             filas_tabla.append(
                 ft.DataRow(cells=[
-                    ft.DataCell(ft.Text(label, size=11, color=ft.colors.BLUE_900)),
+                    ft.DataCell(ft.Text(label, size=11, color=tema["primary"])),
                     ft.DataCell(ft.Text(f"{pct:.1f}%", size=11, color=ft.colors.GREY_700)),
-                    ft.DataCell(ft.Text(f"$ {valor:,.2f}", size=11, color=ft.colors.GREEN_700, weight=ft.FontWeight.BOLD)),
+                    ft.DataCell(ft.Text(f"$ {valor:,.2f}", size=11, color=tema["accent"], weight=ft.FontWeight.BOLD)),
                 ])
             )
-        
+
         filas_tabla.append(
             ft.DataRow(cells=[
-                ft.DataCell(ft.Text("TOTAL", size=11, weight=ft.FontWeight.W_900, color=ft.colors.BLUE_900)),
-                ft.DataCell(ft.Text("100%", size=11, weight=ft.FontWeight.W_900, color=ft.colors.BLUE_900)),
-                ft.DataCell(ft.Text(f"$ {total:,.2f}", size=11, weight=ft.FontWeight.W_900, color=ft.colors.GREEN_900)),
+                ft.DataCell(ft.Text("TOTAL", size=11, weight=ft.FontWeight.W_900, color=tema["primary"])),
+                ft.DataCell(ft.Text("100%", size=11, weight=ft.FontWeight.W_900, color=tema["primary"])),
+                ft.DataCell(ft.Text(f"$ {total:,.2f}", size=11, weight=ft.FontWeight.W_900, color=tema["accent_900"])),
             ])
         )
-            
+
         self.dona_grafico.sections = secciones
         self.leyenda_contenedor.controls = leyenda_items
-        self.tabla_detalle.rows = filas_tabla 
+        self.tabla_detalle.rows = filas_tabla
+        self.titulo_grafico.value = self._get_titulo_para_nivel()
+        self.boton_volver.visible = self.nivel_dona != "GENERAL"
 
-        # --- NUEVO: Disparamos el evento al Padre (el Dashboard) ---
         if self.on_nivel_change:
             self.on_nivel_change(self.nivel_dona)
 
         self.update_safe()
 
-    def on_hover_dona(self, e):
+    def extraer_datos_grafico(self, movimientos=None):
         try:
-            idx = getattr(e, 'section_index', -1)
-            if idx == -1 and hasattr(e, 'data') and e.data:
-                try: idx = json.loads(e.data).get("section_index", -1)
-                except: pass
-            
-            for i, section in enumerate(self.dona_grafico.sections):
-                if i == idx:
-                    section.radius = 63 
-                    data = self.datos_hover[i]
-                    self.texto_hover.value = f"{data['label']}\n{data['pct']:.1f}%  |  $ {data['valor']:,.2f}"
-                    self.texto_hover.color = data['color'] 
-                    self.texto_hover.weight = ft.FontWeight.W_900
-                else:
-                    section.radius = 55 
-            
-            if idx == -1:
-                self.texto_hover.value = "Apunta al grafico para detalles"
-                self.texto_hover.color = ft.colors.GREY_400
-                self.texto_hover.weight = ft.FontWeight.NORMAL
-            
-            self.update_safe()
-        except: pass 
+            movs = movimientos if movimientos is not None else DBManager().get_movimientos(mes=self.mes)
+            if not movs:
+                return
+            df = pl.DataFrame(movs)
+            df = df.filter(
+                (pl.col("ingreso") > 0) &
+                (~pl.col("categoria_flujo").is_in(["Traslado_Salida"])) &
+                (~pl.col("concepto").fill_null("").str.to_uppercase().str.contains("APORTE"))
+            )
 
-    def update_safe(self):
-        if self.page and getattr(self, 'uid', None):
-            self.update()
+            if self.banco and self.banco != "TODOS":
+                df = df.filter(pl.col("origen").str.to_uppercase() == self.banco)
+            if self.mes:
+                df = df.filter(pl.col("fecha").str.starts_with(self.mes))
+
+            if df.is_empty():
+                return
+
+            df_bancos = df.filter(pl.col("origen").str.to_uppercase() != "CAJA")
+            df_caja = df.filter(pl.col("origen").str.to_uppercase() == "CAJA")
+
+            total_bancos = df_bancos["ingreso"].sum()
+            total_caja = df_caja["ingreso"].sum()
+            self.datos_general = {"Bancos": total_bancos, "Caja": total_caja}
+
+            self.datos_bancos = {
+                str(row["origen"]).capitalize(): row["ingreso"]
+                for row in df_bancos.group_by("origen").agg(pl.col("ingreso").sum()).iter_rows(named=True)
+                if row["ingreso"] > 0
+            }
+
+            df_raw = pl.DataFrame(movs)
+            if self.mes:
+                df_raw = df_raw.filter(pl.col("fecha").str.starts_with(self.mes))
+            df_traslados = df_raw.filter(
+                pl.col("origen").str.to_uppercase().is_in(["CAJA", "ALIANZA"]) &
+                (pl.col("categoria_flujo") == "Traslado_Salida")
+            )
+            traslados_caja = df_traslados.filter(
+                pl.col("origen").str.to_uppercase() == "CAJA"
+            )["egreso"].sum()
+            traslados_alianza_ban = df_traslados.filter(
+                (pl.col("origen").str.to_uppercase() == "ALIANZA") &
+                (~pl.col("concepto").fill_null("").str.to_uppercase().str.contains("OCCIDENTE"))
+            )["egreso"].sum()
+            traslados_alianza_occ = df_traslados.filter(
+                (pl.col("origen").str.to_uppercase() == "ALIANZA") &
+                (pl.col("concepto").fill_null("").str.to_uppercase().str.contains("OCCIDENTE"))
+            )["egreso"].sum()
+            traslados_a_bancolombia = traslados_caja + traslados_alianza_ban
+
+            if "Bancolombia" in self.datos_bancos and traslados_a_bancolombia > 0:
+                self.datos_bancos["Bancolombia"] -= traslados_a_bancolombia
+
+            if "Occidente" in self.datos_bancos and traslados_alianza_occ > 0:
+                self.datos_bancos["Occidente"] -= traslados_alianza_occ
+
+            total_otros = sum(v for k, v in self.datos_bancos.items() if k.lower() != "alianza")
+            ingreso_bancos_total = sum(self.datos_bancos.values())
+            ingreso_real_alianza = ingreso_bancos_total - total_otros
+            if "Alianza" in self.datos_bancos:
+                self.datos_bancos["Alianza"] = ingreso_real_alianza
+
+            total_bancos = sum(self.datos_bancos.values())
+            self.datos_general["Bancos"] = total_bancos
+
+            mapeo_cajas, _ = DataLoader.load_mapeos_caja()
+
+            don_diego = df_caja.filter(pl.col("categoria_flujo") == "Ajuste_Don_Diego")
+
+            self.datos_caja = {}
+            for row in df_caja.group_by("centro_costos").agg(pl.col("ingreso").sum()).iter_rows(named=True):
+                if row["ingreso"] > 0:
+                    codigo = str(row["centro_costos"])
+                    match = re.search(r"(\d{5})", codigo)
+                    cod_clean = match.group(1) if match else codigo
+                    nombre = mapeo_cajas.get(cod_clean, codigo.title())
+                    self.datos_caja[nombre] = self.datos_caja.get(nombre, 0) + row["ingreso"]
+
+            app_logger.debug(f"DONA INGRESOS - banco={self.banco} mes={self.mes} nivel={self.nivel_dona}")
+        except:
+            import traceback
+            traceback.print_exc()

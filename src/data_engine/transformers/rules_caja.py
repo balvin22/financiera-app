@@ -4,9 +4,11 @@ import pandas as pd
 import sqlite3
 import os
 import re
+import traceback
 from src.utils.data_loader import DataLoader
+from src.core.logger import app_logger
 
-def procesar_datos_grafico_egresos():
+def procesar_datos_grafico_egresos(solo_excel=False):
     """
     Extrae, cruza y calcula todos los datos necesarios para el gráfico de egresos interactivo.
     Retorna un diccionario con las jerarquías de datos listas para la UI.
@@ -26,8 +28,8 @@ def procesar_datos_grafico_egresos():
     dict_cuentas_2335 = DataLoader.load_cuentas_2335()
     proveedores_lista = DataLoader.load_proveedores()
 
-    # 2. Resumen General (Base Resumen Parquet)
-    if DataLoader.has_data():
+    # 2. Resumen General (Base Resumen Parquet) — solo si no estamos en modo solo_excel
+    if not solo_excel and DataLoader.has_data():
         try:
             df_res = DataLoader.load_parquet("base_resumen").to_pandas()
             try: 
@@ -35,7 +37,8 @@ def procesar_datos_grafico_egresos():
                     "Bancos": df_res.loc[df_res['Concepto'] == 'Total Salidas x Bancos', 'Valor'].values[0], 
                     "CAJA": df_res.loc[df_res['Concepto'] == 'Total Salidas x Caja', 'Valor'].values[0]
                 }
-            except: pass
+            except Exception as e:
+                app_logger.error(f"rules_caja: Error obteniendo salidas bancarias: {e}")
             
             try:
                 idx_start = df_res.index[df_res['Concepto'] == 'DETALLE DE SALIDAS BANCARIAS'][0]
@@ -43,7 +46,8 @@ def procesar_datos_grafico_egresos():
                 for _, row in df_res.iloc[idx_start+1 : idx_end].iterrows():
                     if pd.notna(row['Valor']) and row['Valor'] > 0: 
                         resultados["datos_ban_entidades"][str(row['Concepto']).replace("Salidas ", "").upper()] = row['Valor']
-            except: pass
+            except Exception as e:
+                app_logger.error(f"rules_caja: Error en detalle salidas bancarias: {e}")
             
             try:
                 idx_start = df_res.index[df_res['Concepto'] == 'DETALLE DE SALIDAS POR CAJA'][0]
@@ -63,8 +67,10 @@ def procesar_datos_grafico_egresos():
                     resultados["datos_caj_entidades"]["CAJA POPAYAN PPAL"] -= abs(ajuste_cruce)
                     if resultados["datos_caj_entidades"]["CAJA POPAYAN PPAL"] < 0: 
                         resultados["datos_caj_entidades"]["CAJA POPAYAN PPAL"] = 0.0
-            except: pass
-        except: pass
+            except Exception as e:
+                app_logger.error(f"rules_caja: Error en detalle salidas caja: {e}")
+        except Exception as e:
+            app_logger.error(f"rules_caja: Error procesando resumen: {e}")
 
     # 3. Proveedores de Caja (Base Global)
     mapping_numero_caja = {}
@@ -98,7 +104,8 @@ def procesar_datos_grafico_egresos():
                     
                 resultados["datos_caj_categorias"][c]["Proveedores"] += v
                 resultados["datos_caj_prov_detalle"][c][prov_name] = resultados["datos_caj_prov_detalle"][c].get(prov_name, 0.0) + v
-        except: pass
+        except Exception as e:
+            app_logger.error(f"rules_caja: Error en proveedores de caja: {e}")
 
     # 4. Gastos (Excel 2335)
     df_gastos = DataLoader.load_excel(f"{DataLoader.CACHE_DIR}/gastos_2335.xlsx")
@@ -135,7 +142,8 @@ def procesar_datos_grafico_egresos():
                         
                     resultados["datos_caj_categorias"][c]["Gastos Operacionales"] += v
                     resultados["datos_caj_gas_detalle"][c][cat] = resultados["datos_caj_gas_detalle"][c].get(cat, 0.0) + v
-        except: pass
+        except Exception as e:
+            app_logger.error(f"rules_caja: Error en gastos 2335: {e}")
 
     # 5. Nómina (Excel 25)
     df_nom = DataLoader.load_excel(f"{DataLoader.CACHE_DIR}/aux_nomina_25.xlsx")
@@ -172,7 +180,8 @@ def procesar_datos_grafico_egresos():
                                 
                             resultados["datos_caj_categorias"][c]["Nómina"] += v
                             resultados["datos_caj_nom_detalle"][c][empleado] = resultados["datos_caj_nom_detalle"][c].get(empleado, 0.0) + v
-        except: pass
+        except Exception as e:
+            app_logger.error(f"rules_caja: Error en nomina: {e}")
         
     # 6. Regla de Equilibrio
     for c, v_total in resultados["datos_caj_entidades"].items():

@@ -3,7 +3,7 @@ import polars as pl
 import pandas as pd
 import xlsxwriter
 import os
-
+import sqlite3
 from src.core.db_manager import DBManager
 from src.data_engine.extractors.bancolombia import BancolombiaExtractor
 from src.data_engine.extractors.occidente import OccidenteExtractor
@@ -62,18 +62,23 @@ class GeneradorFlujoEfectivo:
             
         return df_global
     
-    def generar_mensual_desde_bd(self):
+    def generar_mensual_desde_bd(self, mes_filtro: str = None):
         print("Consultando la Base de Datos para armar el reporte mensual...")
         movimientos_db = self.db.get_movimientos()
         
         if not movimientos_db:
             raise ValueError("No hay datos en la Base de Datos.")
-
-        import sqlite3
-        saldos_iniciales_mes = self.saldos_iniciales.copy()
         
-        fechas_validas = [m["fecha"] for m in movimientos_db if m.get("fecha")]
-        mes_prefix = min(fechas_validas)[:7] if fechas_validas else ""
+        if mes_filtro:
+            movimientos_db = [m for m in movimientos_db if m.get("fecha", "").startswith(mes_filtro)]
+            if not movimientos_db:
+                raise ValueError(f"No hay movimientos para el mes {mes_filtro}")
+            mes_prefix = mes_filtro
+        else:
+            fechas_validas = [m["fecha"] for m in movimientos_db if m.get("fecha")]
+            mes_prefix = min(fechas_validas)[:7] if fechas_validas else ""
+
+        saldos_iniciales_mes = self.saldos_iniciales.copy()
 
         with sqlite3.connect("local_cache/maestros.db") as conn:
             cursor = conn.cursor()
@@ -90,7 +95,8 @@ class GeneradorFlujoEfectivo:
         df_global = pl.DataFrame(movimientos_db).rename({
             "origen": "Origen", "concepto": "Concepto", "documento_referencia": "Documento_Referencia",
             "numero_doc": "Numero_Doc", "ingreso": "Ingreso", "egreso": "Egreso", 
-            "categoria_flujo": "Categoria_Flujo", "tercero": "Tercero", "centro_costos": "Centro_Costos"
+            "categoria_flujo": "Categoria_Flujo", "tercero": "Tercero", "centro_costos": "Centro_Costos",
+            "vinculado": "Vinculado"
         }).with_columns(pl.col("fecha").cast(pl.Utf8).str.to_date("%Y-%m-%d", strict=False).alias("Fecha"))
 
         if self.rutas.get("caja_bancos") and os.path.exists(self.rutas["caja_bancos"]):
@@ -165,6 +171,7 @@ class GeneradorFlujoEfectivo:
                     saldos_actuales[banco.upper()] = self.saldos_iniciales.get(banco.upper(), 0.0)
 
         acumulador_diario = {}
+        movimientos_batch = []
 
         for row in registros:
             fecha_str = row.get("Fecha_Str")
@@ -181,8 +188,9 @@ class GeneradorFlujoEfectivo:
             cat_flujo = str(row.get("Categoria_Flujo", "Operacion_Normal"))
             tercero = str(row.get("Tercero", "N/A"))
             cco = str(row.get("Centro_Costos") or row.get("NOMBRE_CCO") or "N/A")
+            vinculado = str(row.get("Vinculado", ""))
 
-            self.db.guardar_movimiento(fecha_str, origen, concepto, doc_ref, num_doc, ing, egr, cat_flujo, tercero, cco)
+            movimientos_batch.append((fecha_str, origen, concepto, doc_ref, num_doc, ing, egr, cat_flujo, tercero, cco, vinculado))
             
             llave_dia = (fecha_str, origen)
             if llave_dia not in acumulador_diario:
@@ -190,7 +198,11 @@ class GeneradorFlujoEfectivo:
             acumulador_diario[llave_dia]["ing"] += ing
             acumulador_diario[llave_dia]["egr"] += egr
 
+        # Batch insert todos los movimientos en UNA sola transacción
+        self.db.guardar_movimientos_batch(movimientos_batch)
+
         llaves_ordenadas = sorted(acumulador_diario.keys(), key=lambda x: (x[0], x[1]))
+        saldos_batch = []
         
         for fecha_str, origen in llaves_ordenadas:
             ing_total = acumulador_diario[(fecha_str, origen)]["ing"]
@@ -199,8 +211,14 @@ class GeneradorFlujoEfectivo:
             saldo_inicial = saldos_actuales.get(origen, 0.0)
             saldo_final = saldo_inicial + ing_total - egr_total
             
-            self.db.guardar_saldo_diario(fecha_str, origen, saldo_inicial, saldo_final)
+            saldos_batch.append((fecha_str, origen, saldo_inicial, saldo_final))
             saldos_actuales[origen] = saldo_final
+
+        # Batch insert todos los saldos en UNA sola transacción
+        self.db.guardar_saldos_batch(saldos_batch)
+
+        # Invalidar caches UNA sola vez al final
+        self.db._invalidar_caches()
 
         return len(fechas_procesadas)
 

@@ -154,10 +154,35 @@ class MaestrosView(ft.Container):
         else:
             self.mostrar_snack("⚠️ Debes llenar los campos principales", ft.colors.ORANGE_700)
 
+    def _confirmar_borrar(self, codigo):
+        if hasattr(self, '_dialogo_confirmar') and self._dialogo_confirmar in self.page_ref.overlay:
+            self.page_ref.overlay.remove(self._dialogo_confirmar)
+        self._dialogo_confirmar = ft.AlertDialog(
+            modal=True,
+            title=ft.Text("Confirmar eliminación"),
+            content=ft.Text(f"¿Estás seguro de eliminar el código '{codigo}'? Esta acción no se puede deshacer."),
+            actions=[
+                ft.TextButton("Cancelar", on_click=lambda e: self._cerrar_confirmacion(False, codigo)),
+                ft.TextButton("Eliminar", style=ft.ButtonStyle(color=ft.colors.RED_700),
+                              on_click=lambda e: self._cerrar_confirmacion(True, codigo)),
+            ],
+            actions_alignment=ft.MainAxisAlignment.END,
+        )
+        self.page_ref.overlay.append(self._dialogo_confirmar)
+        self._dialogo_confirmar.open = True
+        self.page_ref.update()
+
+    def _cerrar_confirmacion(self, confirmado: bool, codigo: str):
+        if self._dialogo_confirmar:
+            self._dialogo_confirmar.open = False
+            if confirmado:
+                self.db.delete(self.tabla_actual, codigo)
+                self.cargar_datos()
+                self.mostrar_snack("🗑️ Registro eliminado", ft.colors.RED_700)
+            self.page_ref.update()
+
     def borrar_registro(self, codigo):
-        self.db.delete(self.tabla_actual, codigo)
-        self.cargar_datos()
-        self.mostrar_snack("🗑️ Registro eliminado", ft.colors.RED_700)
+        self._confirmar_borrar(codigo)
 
     def on_import_result(self, e: ft.FilePickerResultEvent):
         if e.files and len(e.files) > 0:

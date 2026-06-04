@@ -4,13 +4,27 @@ import pandas as pd
 import os
 from src.core.logger import get_logger
 from datetime import datetime
+from src.utils.data_loader import DataLoader
 
 logger = get_logger("db_manager")
 
 DB_PATH = "local_cache/maestros.db"
 
 class DBManager:
+    _instance = None
+    _movimientos_cache = None
+    _meses_cache = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
     def __init__(self):
+        if self._initialized:
+            return
+        self._initialized = True
         os.makedirs("local_cache", exist_ok=True)
         self.init_db()
 
@@ -43,8 +57,9 @@ class DBManager:
                                 egreso REAL DEFAULT 0,
                                 categoria_flujo TEXT,
                                 tercero TEXT,
-                                centro_costos TEXT,
-                                conciliado BOOLEAN DEFAULT 0,
+                                 centro_costos TEXT,
+                                 vinculado TEXT DEFAULT '',
+                                 conciliado BOOLEAN DEFAULT 0,
                                 created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
                                 
             # 2. Tabla de Saldos (Para el arrastre matemático del día a día)
@@ -60,6 +75,52 @@ class DBManager:
             cursor.execute('''CREATE INDEX IF NOT EXISTS idx_mov_fecha ON flujo_movimientos(fecha)''')
             cursor.execute('''CREATE INDEX IF NOT EXISTS idx_mov_origen ON flujo_movimientos(origen)''')
             cursor.execute('''CREATE INDEX IF NOT EXISTS idx_saldos_fecha ON saldos_diarios(fecha)''')
+            
+            # --- TABLAS AUXILIARES (Gastos, Nómina, Proveedores) ---
+            cursor.execute('''CREATE TABLE IF NOT EXISTS aux_gastos_2335 (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                mes TEXT NOT NULL,
+                                tipo_doc TEXT,
+                                num_doc TEXT,
+                                cuenta TEXT,
+                                categoria TEXT,
+                                valor REAL DEFAULT 0,
+                                detalle TEXT,
+                                created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+            cursor.execute('''CREATE INDEX IF NOT EXISTS idx_aux_gastos_mes ON aux_gastos_2335(mes)''')
+            
+            cursor.execute('''CREATE TABLE IF NOT EXISTS aux_nomina_25 (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                mes TEXT NOT NULL,
+                                tipo_doc TEXT,
+                                num_doc TEXT,
+                                caja_codigo TEXT,
+                                caja_nombre TEXT,
+                                empleado TEXT,
+                                valor REAL DEFAULT 0,
+                                detalle TEXT,
+                                created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+            cursor.execute('''CREATE INDEX IF NOT EXISTS idx_aux_nomina_mes ON aux_nomina_25(mes)''')
+            
+            cursor.execute('''CREATE TABLE IF NOT EXISTS nomina_por_caja (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                mes TEXT NOT NULL,
+                                caja TEXT NOT NULL,
+                                empleado TEXT,
+                                valor REAL DEFAULT 0,
+                                created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+            cursor.execute('''CREATE INDEX IF NOT EXISTS idx_npc_mes ON nomina_por_caja(mes)''')
+            
+            cursor.execute('''CREATE TABLE IF NOT EXISTS aux_prov_2205 (
+                                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                                mes TEXT NOT NULL,
+                                tipo_doc TEXT,
+                                num_doc TEXT,
+                                detalle TEXT,
+                                valor REAL DEFAULT 0,
+                                es_supply BOOLEAN DEFAULT 0,
+                                created_at TEXT DEFAULT CURRENT_TIMESTAMP)''')
+            cursor.execute('''CREATE INDEX IF NOT EXISTS idx_aux_prov_mes ON aux_prov_2205(mes)''')
             
             conn.commit()
 
@@ -80,6 +141,12 @@ class DBManager:
                 cursor.execute(f"SELECT codigo, nombre FROM {tabla} ORDER BY nombre ASC")
             return cursor.fetchall()
 
+    def _invalidar_caches_maestros(self):
+        DataLoader._cache_mapeos_caja = None
+        DataLoader._cache_cuentas_2335 = None
+        DataLoader._cache_proveedores = None
+        DataLoader._cache_codigos_proveedores = None
+
     def insert_or_update(self, tabla: str, codigo: str, nombre: str, recauda: str = "", docs: str = ""):
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
@@ -88,34 +155,52 @@ class DBManager:
             else:
                 cursor.execute(f"INSERT OR REPLACE INTO {tabla} (codigo, nombre) VALUES (?, ?)", (codigo, nombre))
             conn.commit()
+        self._invalidar_caches_maestros()
 
     def delete(self, tabla: str, codigo: str):
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute(f"DELETE FROM {tabla} WHERE codigo = ?", (codigo,))
             conn.commit()
+        self._invalidar_caches_maestros()
 
     def importar_desde_excel(self, tabla: str, ruta_excel: str):
         try:
-            if tabla == "centros_costos":
-                df = pd.read_excel(ruta_excel)
-                for index, row in df.iterrows():
-                    codigo = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
-                    if codigo.isdigit() or len(codigo) >= 3:
-                        nombre = str(row.iloc[1]).strip().upper() if pd.notna(row.iloc[1]) else ""
-                        recauda = str(row.iloc[2]).strip().upper() if pd.notna(row.iloc[2]) else ""
-                        docs = str(row.iloc[3]).strip().upper() if pd.notna(row.iloc[3]) else ""
-                        if recauda == "NAN": recauda = ""
-                        if docs == "NAN": docs = ""
-                        self.insert_or_update(tabla, codigo, nombre, recauda, docs)
-            else:
-                df = pd.read_excel(ruta_excel, header=None)
-                for index, row in df.iterrows():
-                    if len(row) >= 2:
-                        codigo = str(row.iloc[0]).strip()
-                        nombre = str(row.iloc[1]).strip().upper().replace('"', '')
-                        if codigo.isdigit() and len(nombre) > 2:
-                            self.insert_or_update(tabla, codigo, nombre)
+            with sqlite3.connect(DB_PATH) as conn:
+                cursor = conn.cursor()
+                if tabla == "centros_costos":
+                    df = pd.read_excel(ruta_excel)
+                    registros = []
+                    for _, row in df.iterrows():
+                        codigo = str(row.iloc[0]).strip() if pd.notna(row.iloc[0]) else ""
+                        if codigo.isdigit() or len(codigo) >= 3:
+                            nombre = str(row.iloc[1]).strip().upper() if pd.notna(row.iloc[1]) else ""
+                            recauda = str(row.iloc[2]).strip().upper() if pd.notna(row.iloc[2]) else ""
+                            docs = str(row.iloc[3]).strip().upper() if pd.notna(row.iloc[3]) else ""
+                            if recauda == "NAN": recauda = ""
+                            if docs == "NAN": docs = ""
+                            registros.append((codigo, nombre, recauda, docs))
+                    if registros:
+                        cursor.executemany(
+                            "INSERT OR REPLACE INTO centros_costos (codigo, nombre, recauda, docs) VALUES (?, ?, ?, ?)",
+                            registros
+                        )
+                else:
+                    df = pd.read_excel(ruta_excel, header=None)
+                    registros = []
+                    for _, row in df.iterrows():
+                        if len(row) >= 2:
+                            codigo = str(row.iloc[0]).strip()
+                            nombre = str(row.iloc[1]).strip().upper().replace('"', '')
+                            if codigo.isdigit() and len(nombre) > 2:
+                                registros.append((codigo, nombre))
+                    if registros:
+                        cursor.executemany(
+                            f"INSERT OR REPLACE INTO {tabla} (codigo, nombre) VALUES (?, ?)",
+                            registros
+                        )
+                conn.commit()
+            self._invalidar_caches_maestros()
             return True
         except Exception as e:
             logger.error(f"Error importando: {e}")
@@ -124,21 +209,39 @@ class DBManager:
     # ==========================================
     # MÉTODOS TRANSACCIONALES (Nueva Lógica)
     # ==========================================
+    def _invalidar_caches(self):
+        DBManager._movimientos_cache = None
+        DBManager._meses_cache = None
+        from src.data_engine.transformers.rules_flujo_diario import invalidar_cache_flujo
+        invalidar_cache_flujo()
+
     def guardar_movimiento(self, fecha: str, origen: str, concepto: str, doc_ref: str, num_doc: str, 
-                           ingreso: float, egreso: float, cat_flujo: str, tercero: str = "N/A", cco: str = "N/A"):
+                           ingreso: float, egreso: float, cat_flujo: str, tercero: str = "N/A", cco: str = "N/A", vinculado: str = ""):
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute('''
                 INSERT INTO flujo_movimientos 
-                (fecha, origen, concepto, documento_referencia, numero_doc, ingreso, egreso, categoria_flujo, tercero, centro_costos)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (fecha, origen, concepto, doc_ref, num_doc, ingreso, egreso, cat_flujo, tercero, cco))
+                (fecha, origen, concepto, documento_referencia, numero_doc, ingreso, egreso, categoria_flujo, tercero, centro_costos, vinculado)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', (fecha, origen, concepto, doc_ref, num_doc, ingreso, egreso, cat_flujo, tercero, cco, vinculado))
+            conn.commit()
+            self._invalidar_caches()
+
+    def guardar_movimientos_batch(self, registros: list):
+        if not registros:
+            return
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT INTO flujo_movimientos 
+                (fecha, origen, concepto, documento_referencia, numero_doc, ingreso, egreso, categoria_flujo, tercero, centro_costos, vinculado)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ''', registros)
             conn.commit()
 
     def guardar_saldo_diario(self, fecha: str, banco: str, saldo_inicial: float, saldo_final: float):
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
-            # Si la fecha y el banco ya existen, actualiza los saldos. Si no, los inserta.
             cursor.execute('''
                 INSERT INTO saldos_diarios (fecha, banco, saldo_inicial, saldo_final)
                 VALUES (?, ?, ?, ?)
@@ -147,11 +250,37 @@ class DBManager:
                     saldo_final=excluded.saldo_final
             ''', (fecha, banco, saldo_inicial, saldo_final))
             conn.commit()
+        self._invalidar_caches()
+
+    def guardar_saldos_batch(self, saldos: list):
+        if not saldos:
+            return
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.executemany('''
+                INSERT INTO saldos_diarios (fecha, banco, saldo_inicial, saldo_final)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(fecha, banco) DO UPDATE SET 
+                    saldo_inicial=excluded.saldo_inicial,
+                    saldo_final=excluded.saldo_final
+            ''', saldos)
+            conn.commit()
+
+    def tiene_saldos_diarios(self) -> bool:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM saldos_diarios")
+            return cursor.fetchone()[0] > 0
+
+    def tiene_movimientos(self) -> bool:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM flujo_movimientos")
+            return cursor.fetchone()[0] > 0
 
     def get_ultimo_saldo(self, banco: str) -> float:
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
-            # Obtiene el saldo del día cronológicamente más reciente
             cursor.execute('''
                 SELECT saldo_final FROM saldos_diarios 
                 WHERE banco = ? 
@@ -160,12 +289,15 @@ class DBManager:
             row = cursor.fetchone()
             return row[0] if row else 0.0
 
-    def get_movimientos(self, fecha_inicio: str = None, fecha_fin: str = None, origen: str = None):
-        """Retorna el detalle línea a línea para conciliación."""
+    def get_movimientos(self, fecha_inicio: str = None, fecha_fin: str = None, origen: str = None, mes: str = None):
+        """Retorna el detalle línea a línea para conciliación. Usa caché si no hay filtros."""
+        cache_key = (fecha_inicio, fecha_fin, origen, mes)
+        if cache_key == (None, None, None, None) and DBManager._movimientos_cache is not None:
+            return DBManager._movimientos_cache
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             query = """SELECT fecha, origen, concepto, documento_referencia, numero_doc, 
-                              ingreso, egreso, categoria_flujo, tercero, centro_costos, conciliado 
+                              ingreso, egreso, categoria_flujo, tercero, centro_costos, conciliado, vinculado 
                        FROM flujo_movimientos WHERE 1=1"""
             params = []
             
@@ -178,13 +310,18 @@ class DBManager:
             if origen:
                 query += " AND origen = ?"
                 params.append(origen)
+            if mes:
+                query += " AND fecha LIKE ?"
+                params.append(mes + '%')
             
             query += " ORDER BY fecha DESC, origen ASC"
             cursor.execute(query, params)
             
-            # Devuelve una lista de diccionarios con los nombres de las columnas
             columns = [desc[0] for desc in cursor.description]
-            return [dict(zip(columns, row)) for row in cursor.fetchall()]
+            resultados = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            if cache_key == (None, None, None, None):
+                DBManager._movimientos_cache = resultados
+            return resultados
 
     def get_fechas_disponibles(self):
         with sqlite3.connect(DB_PATH) as conn:
@@ -193,10 +330,13 @@ class DBManager:
             return [row[0] for row in cursor.fetchall()]
 
     def get_meses_disponibles(self):
+        if DBManager._meses_cache is not None:
+            return DBManager._meses_cache
         with sqlite3.connect(DB_PATH) as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT DISTINCT substr(fecha, 1, 7) FROM saldos_diarios ORDER BY fecha ASC")
-            return [row[0] for row in cursor.fetchall()]
+            DBManager._meses_cache = [row[0] for row in cursor.fetchall()]
+        return DBManager._meses_cache
 
     def get_dias_disponibles(self, mes: str, banco: str = "TODOS"):
         with sqlite3.connect(DB_PATH) as conn:
@@ -237,3 +377,49 @@ class DBManager:
             cursor.execute("DELETE FROM flujo_movimientos WHERE fecha = ?", (fecha,))
             cursor.execute("DELETE FROM saldos_diarios WHERE fecha = ?", (fecha,))
             conn.commit()
+        self._invalidar_caches()
+
+    # ==========================================
+    # MÉTODOS PARA TABLAS AUXILIARES
+    # ==========================================
+    def guardar_aux_gastos(self, mes: str, registros: list):
+        if not registros:
+            return
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM aux_gastos_2335 WHERE mes = ?", (mes,))
+            cursor.executemany('''INSERT INTO aux_gastos_2335 (mes,tipo_doc,num_doc,cuenta,categoria,valor,detalle) VALUES (?,?,?,?,?,?,?)''',
+                [(mes, r.get("tipo_doc",""), r.get("num_doc",""), r.get("cuenta",""), r.get("categoria",""), r.get("valor",0.0), r.get("detalle","")) for r in registros])
+            conn.commit()
+
+    def get_aux_gastos(self, mes: str) -> list:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT tipo_doc,num_doc,cuenta,categoria,valor,detalle FROM aux_gastos_2335 WHERE mes=?", (mes,))
+            return [{"tipo_doc":r[0],"num_doc":r[1],"cuenta":r[2],"categoria":r[3],"valor":r[4],"detalle":r[5]} for r in cursor.fetchall()]
+
+    def guardar_aux_nomina(self, mes: str, registros: list):
+        if not registros:
+            return
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM aux_nomina_25 WHERE mes = ?", (mes,))
+            cursor.executemany('''INSERT INTO aux_nomina_25 (mes,tipo_doc,num_doc,caja_codigo,caja_nombre,empleado,valor,detalle) VALUES (?,?,?,?,?,?,?,?)''',
+                [(mes, r.get("tipo_doc",""), r.get("num_doc",""), r.get("caja_codigo",""), r.get("caja_nombre",""), r.get("empleado",""), r.get("valor",0.0), r.get("detalle","")) for r in registros])
+            conn.commit()
+
+    def guardar_nomina_por_caja(self, mes: str, registros: list):
+        if not registros:
+            return
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("DELETE FROM nomina_por_caja WHERE mes = ?", (mes,))
+            cursor.executemany('''INSERT INTO nomina_por_caja (mes,caja,empleado,valor) VALUES (?,?,?,?)''',
+                [(mes, r["caja"], r.get("empleado",""), r["valor"]) for r in registros])
+            conn.commit()
+
+    def get_nomina_por_caja(self, mes: str) -> list:
+        with sqlite3.connect(DB_PATH) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT caja, empleado, valor FROM nomina_por_caja WHERE mes=?", (mes,))
+            return [{"caja":r[0],"empleado":r[1],"valor":r[2]} for r in cursor.fetchall()]

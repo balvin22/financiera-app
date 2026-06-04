@@ -12,7 +12,7 @@ class DaviviendaExtractor(BaseExtractor):
             # Limpiamos los nombres de columnas por si traen espacios
             pdf.columns = pdf.columns.str.strip()
             
-            # ACTUALIZADO: Buscamos las nuevas columnas (Tran y Valor Total)
+            # Buscamos las columnas útiles, pero no asumimos que todas estén presentes
             cols_utiles = ["Fecha", "Tran", "Desc Mot.", "Doc.", "Valor Total"]
             cols_presentes = [col for col in cols_utiles if col in pdf.columns]
             pdf = pdf[cols_presentes].copy()

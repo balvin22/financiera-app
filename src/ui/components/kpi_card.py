@@ -10,7 +10,7 @@ def crear_tarjeta_kpi(titulo, valor, icono, color_icono, on_click=None, seleccio
     
     return ft.Container(
         expand=True,
-        on_click=on_click, # Habilitamos el clic (¡sin la propiedad cursor!)
+        on_click=on_click,
         content=ft.Row([
             ft.Container(content=ft.Icon(icono, color=color_icono, size=24), bgcolor=ft.colors.WHITE, padding=10, border_radius=8),
             ft.Column([
@@ -31,7 +31,7 @@ def crear_tarjeta_kpi_compuesta(titulo, saldo_inicial, ingresos_mes, total, icon
     
     return ft.Container(
         expand=True,
-        on_click=on_click, # Habilitamos el clic (¡sin la propiedad cursor!)
+        on_click=on_click,
         content=ft.Row([
             ft.Container(content=ft.Icon(icono, color=color_icono, size=24), bgcolor=ft.colors.WHITE, padding=10, border_radius=8),
             ft.Column([

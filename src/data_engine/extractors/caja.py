@@ -49,7 +49,10 @@ class CajaExtractor(BaseExtractor):
                     pl.col("CCOSTO").cast(pl.Utf8, strict=False).fill_null("N/A").alias("NOMBRE_CCO"),
                     
                     # --- AQUÍ ATRAPAMOS EL NÚMERO ---
-                    pl.col("NUMERO").cast(pl.Utf8, strict=False).fill_null("").alias("Numero_Doc")
+                    pl.col("NUMERO").cast(pl.Utf8, strict=False).fill_null("").alias("Numero_Doc"),
+
+                    # --- VINCULADO ---
+                    pl.col("VINCULADO").cast(pl.Utf8, strict=False).fill_null("").alias("Vinculado")
                 ])
                 .with_columns(pl.lit("CAJA").alias("Origen"))
                 .filter(pl.col("Fecha").is_not_null())
@@ -72,4 +75,4 @@ class CajaExtractor(BaseExtractor):
             
         except Exception as e:
             print(f"Error procesando Caja ({self.filepath}): {e}")
-            return pl.DataFrame({"Fecha": [], "Concepto": [], "Documento_Referencia": [], "Ingreso": [], "Egreso": [], "Origen": [], "Categoria_Flujo": [], "Tercero": [], "NOMBRE_CCO": [], "Numero_Doc": []})
+            return pl.DataFrame({"Fecha": [], "Concepto": [], "Documento_Referencia": [], "Ingreso": [], "Egreso": [], "Origen": [], "Categoria_Flujo": [], "Tercero": [], "NOMBRE_CCO": [], "Numero_Doc": [], "Vinculado": []})
