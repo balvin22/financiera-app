@@ -9,7 +9,7 @@ class AlianzaExtractor(BaseExtractor):
         try:
             try:
                 pdf = pd.read_excel(self.filepath, sheet_name=0)
-                if not {"Fecha Transacción", "Concepto", "Total", "Ingreso", "Egreso"}.intersection(pdf.columns):
+                if not {"Fecha Transacción", "Concepto", "Valor", "Ingreso", "Egreso"}.intersection(pdf.columns):
                     raise ValueError("Formato no detectado, probando con skiprows")
             except (ValueError, Exception):
                 pdf = pd.read_excel(self.filepath, sheet_name=0, skiprows=5)
@@ -39,13 +39,13 @@ class AlianzaExtractor(BaseExtractor):
                     return 0.0
 
             tiene_separados = "Ingreso" in cols_presentes and "Egreso" in cols_presentes
-            tiene_valor = "Total" in cols_presentes
+            tiene_valor = "Valor" in cols_presentes
 
             if tiene_separados:
                 pdf["Ingreso"] = pdf["Ingreso"].apply(limpiar_valor)
                 pdf["Egreso"] = pdf["Egreso"].apply(limpiar_valor)
             elif tiene_valor:
-                pdf["Total"] = pdf["Total"].apply(limpiar_valor)
+                pdf["Valor"] = pdf["Valor"].apply(limpiar_valor)
             else:
                 print("❌ Alianza: No se encontraron columnas.")
                 return pl.DataFrame()
@@ -63,8 +63,8 @@ class AlianzaExtractor(BaseExtractor):
                 df_calc = df.with_columns([pl.col("Ingreso"), pl.col("Egreso")])
             else:
                 df_calc = df.with_columns([
-                    pl.when(pl.col("Total") > 0).then(pl.col("Total")).otherwise(0.0).alias("Ingreso"),
-                    pl.when(pl.col("Total") < 0).then(pl.col("Total").abs()).otherwise(0.0).alias("Egreso")
+                    pl.when(pl.col("Valor") > 0).then(pl.col("Valor")).otherwise(0.0).alias("Ingreso"),
+                    pl.when(pl.col("Valor") < 0).then(pl.col("Valor").abs()).otherwise(0.0).alias("Egreso")
                 ])
 
             # =========================================================
