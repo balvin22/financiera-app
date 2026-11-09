@@ -1,5 +1,11 @@
 # ui/components/tarjeta_banco.py
 import flet as ft
+from src.ui.theme import (
+    COLOR_BG_CARD, COLOR_BORDER, COLOR_PRIMARY,
+    COLOR_TEXT_MUTED, COLOR_WHITE,
+    BORDER_RADIUS_CARD, SIZE_SMALL, WEIGHT_BOLD,
+    SHADOW_ELEVATED, COLOR_INGRESO
+)
 
 class TarjetaBanco(ft.Container):
     def __init__(self, banco_id: str, nombre: str, color: str, on_cargar_click, icono: str = None, logo_path: str = None):
@@ -8,18 +14,18 @@ class TarjetaBanco(ft.Container):
         
         self.width = 200
         self.height = 235
-        self.bgcolor = ft.colors.WHITE
+        self.bgcolor = COLOR_BG_CARD
         self.border_radius = 15
         self.padding = 15
         self.alignment = ft.alignment.center
-        self.border = ft.border.all(1, ft.colors.GREY_200)
-        self.shadow = ft.BoxShadow(blur_radius=15, color=ft.colors.BLACK12, offset=ft.Offset(0, 5))
+        self.border = ft.border.all(1, COLOR_BORDER)
+        self.shadow = SHADOW_ELEVATED
 
-        self.texto_estado = ft.Text("Esperando archivo...", color=ft.colors.GREY_500, size=12)
+        self.texto_estado = ft.Text("Esperando archivo...", color=COLOR_TEXT_MUTED, size=SIZE_SMALL)
         
         self.input_saldo = ft.TextField(
             label="Saldo Inicial", value="", hint_text="0.00", width=160, height=48, dense=True, 
-            prefix_text="$ ", text_size=13, content_padding=ft.padding.symmetric(horizontal=10, vertical=10), 
+            prefix_text="$ ", text_size=SIZE_SMALL, content_padding=ft.padding.symmetric(horizontal=10, vertical=10), 
             border_color=ft.colors.BLUE_200, focused_border_color=ft.colors.BLUE_600,
             tooltip=f"Ingresa el saldo inicial real de {nombre}"
         )
@@ -51,8 +57,8 @@ class TarjetaBanco(ft.Container):
 
     def marcar_como_cargado(self):
         self.texto_estado.value = "✅ Archivo Cargado"
-        self.texto_estado.color = ft.colors.GREEN_600
-        self.texto_estado.weight = ft.FontWeight.BOLD
+        self.texto_estado.color = COLOR_INGRESO
+        self.texto_estado.weight = WEIGHT_BOLD
         self.update()
 
     def obtener_saldo(self) -> float:
@@ -71,7 +77,7 @@ class TarjetaBanco(ft.Container):
 
     def limpiar(self):
         self.texto_estado.value = "Esperando archivo..."
-        self.texto_estado.color = ft.colors.GREY_500
+        self.texto_estado.color = COLOR_TEXT_MUTED
         self.texto_estado.weight = ft.FontWeight.NORMAL
         self.input_saldo.value = ""
         self.input_saldo.border_color = ft.colors.BLUE_200

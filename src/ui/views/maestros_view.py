@@ -1,5 +1,13 @@
 # src/ui/views/maestros_view.py
 import flet as ft
+from src.ui.theme import (
+    PADDING_VIEW, COLOR_BG, COLOR_TITLE, COLOR_SUBTITLE,
+    COLOR_PRIMARY, COLOR_TEXT_MUTED, COLOR_BORDER,
+    COLOR_WHITE, COLOR_BG_CARD,
+    SIZE_TITLE_SM, SIZE_BODY, SIZE_SECTION_TITLE,
+    WEIGHT_TITLE, WEIGHT_SECTION,
+    SHADOW_CARD, BORDER_RADIUS_CARD, BORDER_RADIUS_SMALL, BORDER_CARD
+)
 from src.core.db_manager import DBManager
 
 class MaestrosView(ft.Container):
@@ -7,8 +15,8 @@ class MaestrosView(ft.Container):
         super().__init__()
         self.page_ref = page 
         self.expand = True
-        self.padding = 40
-        self.bgcolor = "#F8FAFC"
+        self.padding = PADDING_VIEW
+        self.bgcolor = COLOR_BG
         
         self.db = DBManager()
         
@@ -28,8 +36,8 @@ class MaestrosView(ft.Container):
 
     def build_ui(self):
         header = ft.Column([
-            ft.Text("Gestión de Bases Maestras", size=28, weight=ft.FontWeight.W_900, color=ft.colors.BLUE_900),
-            ft.Text("Administra internamente Proveedores, Gastos y mapeo de Cajas.", size=15, color=ft.colors.GREY_700),
+            ft.Text("Gestión de Bases Maestras", size=SIZE_TITLE_SM, weight=WEIGHT_TITLE, color=COLOR_TITLE),
+            ft.Text("Administra internamente Proveedores, Gastos y mapeo de Cajas.", size=SIZE_BODY, color=COLOR_SUBTITLE),
             ft.Divider(height=20, color=ft.colors.TRANSPARENT)
         ])
 

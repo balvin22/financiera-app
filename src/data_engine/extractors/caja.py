@@ -64,7 +64,7 @@ class CajaExtractor(BaseExtractor):
                 .then(pl.lit("Traslado_Salida"))
                 .when(
                     pl.col("Documento_Referencia").str.starts_with("RD") & 
-                    pl.col("Concepto").str.to_uppercase().str.contains("DIEGO")
+                    pl.col("Tercero").str.to_uppercase().str.contains("PERAFAN FERNANDEZ DIEGO RENE")
                 )
                 .then(pl.lit("Ajuste_Don_Diego"))
                 .otherwise(pl.lit("Operacion_Normal"))

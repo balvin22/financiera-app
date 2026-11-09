@@ -9,7 +9,6 @@ class FlujoDiarioGraficos(ft.Container):
     def __init__(self, page: ft.Page):
         super().__init__()
         self.page = page
-        self.expand = True
         self.padding = 30
         self.bgcolor = "#F8FAFC"
 

@@ -54,7 +54,7 @@ class CajaBancosExtractor(BaseExtractor):
                     pl.col("MCNVALCRED").cast(pl.Float64, strict=False).fill_null(0.0).alias("Egreso"),
                     pl.col("VINNOMBRE").cast(pl.Utf8).fill_null("SIN TERCERO").alias("Tercero"),
                     pl.lit("N/A").alias("NOMBRE_CCO"),
-                    pl.col("MCNVINCULA").cast(pl.Utf8).fill_null("").alias("Codigo_Proveedor")
+                    pl.col("MCNVINCULA").cast(pl.Utf8, strict=False).str.strip_chars().str.replace(r"\.0$", "").fill_null("").alias("Codigo_Proveedor")
                 ])
                 .with_columns(
                     pl.lit("CAJA_BANCOS").alias("Origen"),

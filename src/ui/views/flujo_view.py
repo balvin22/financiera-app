@@ -8,6 +8,16 @@ import subprocess
 import pandas as pd
 import polars as pl
 import sqlite3
+from src.ui.theme import (
+    PADDING_VIEW, COLOR_BG, COLOR_TITLE, COLOR_SUBTITLE,
+    COLOR_PRIMARY, COLOR_PRIMARY_900, COLOR_PRIMARY_50,
+    COLOR_WHITE, COLOR_EGRESO, COLOR_INGRESO,
+    COLOR_TEXT_SECONDARY, COLOR_TEXT_MUTED,
+    SIZE_TITLE_SM, SIZE_BODY, SIZE_SECTION_TITLE,
+    WEIGHT_TITLE, WEIGHT_SECTION, WEIGHT_BOLD,
+    SHADOW_CARD, SHADOW_ELEVATED, BORDER_RADIUS_CARD,
+    BORDER_CARD
+)
 from src.core.db_manager import DBManager
 from src.data_engine.reports.flujo_efectivo import GeneradorFlujoEfectivo
 from src.utils.data_loader import DataLoader
@@ -20,8 +30,8 @@ class FlujoView(ft.Container):
         super().__init__()
         self.page = page
         self.expand = True
-        self.padding = 40
-        self.bgcolor = "#F8FAFC" 
+        self.padding = PADDING_VIEW
+        self.bgcolor = COLOR_BG
         
         self.tarjetas_bancos = {} 
         self.pdf_processor = PdfProcessor()
@@ -385,8 +395,8 @@ class FlujoView(ft.Container):
 
     def build_ui(self):
         header = ft.Column([
-            ft.Text("Consolidador de Flujo de Efectivo", size=28, weight=ft.FontWeight.W_900, color=ft.colors.BLUE_900),
-            ft.Text("Automatiza la lectura de extractos y genera el reporte gerencial en segundos.", size=15, color=ft.colors.GREY_700),
+            ft.Text("Consolidador de Flujo de Efectivo", size=SIZE_TITLE_SM, weight=WEIGHT_TITLE, color=COLOR_TITLE),
+            ft.Text("Automatiza la lectura de extractos y genera el reporte gerencial en segundos.", size=SIZE_BODY, color=COLOR_SUBTITLE),
             ft.Divider(height=20, color=ft.colors.TRANSPARENT)
         ])
 
@@ -409,8 +419,8 @@ class FlujoView(ft.Container):
 
         titulo_tarjetas = ft.Row([
             ft.Column([
-                ft.Text("Paso 1: Extractos Bancarios y Cajas", size=18, weight=ft.FontWeight.W_800, color=ft.colors.BLUE_800),
-                ft.Text("Carga el Excel de cada cuenta para inyectarlo a la Base de Datos.", size=13, color=ft.colors.GREY_600),
+                ft.Text("Paso 1: Extractos Bancarios y Cajas", size=SIZE_SECTION_TITLE, weight=WEIGHT_SECTION, color=COLOR_PRIMARY),
+                ft.Text("Carga el Excel de cada cuenta para inyectarlo a la Base de Datos.", size=SIZE_BODY, color=COLOR_TEXT_SECONDARY),
             ]),
             ft.Container(expand=True),
             boton_saldos
@@ -448,8 +458,8 @@ class FlujoView(ft.Container):
 
         # --- SECCIÓN 2: AUXILIARES (Solo visible en Mensual) ---
         self.titulo_auxiliares = ft.Column([
-            ft.Text("Paso 2: Bases Auxiliares", size=18, weight=ft.FontWeight.W_800, color=ft.colors.BLUE_800),
-            ft.Text("Sube aquí todos los libros auxiliares que alimentarán el desglose del reporte.", size=13, color=ft.colors.GREY_600),
+            ft.Text("Paso 2: Bases Auxiliares", size=SIZE_SECTION_TITLE, weight=WEIGHT_SECTION, color=COLOR_PRIMARY),
+            ft.Text("Sube aquí todos los libros auxiliares que alimentarán el desglose del reporte.", size=SIZE_BODY, color=COLOR_TEXT_SECONDARY),
         ])
 
         botones_auxiliares = ft.Row([
@@ -463,8 +473,8 @@ class FlujoView(ft.Container):
 
         # --- SECCIÓN 3: AJUSTES ALIANZA (Ahora visible en DIARIO) ---
         self.titulo_ajustes = ft.Column([
-            ft.Text("Paso 2: Conciliaciones Extras de Fin de Mes (Alianza)", size=18, weight=ft.FontWeight.W_800, color=ft.colors.BLUE_800),
-            ft.Text("Solo para final de mes: inyecta a la BD los rendimientos e impuestos extraídos de los PDFs.", size=13, color=ft.colors.GREY_600),
+            ft.Text("Paso 2: Conciliaciones Extras de Fin de Mes (Alianza)", size=SIZE_SECTION_TITLE, weight=WEIGHT_SECTION, color=COLOR_PRIMARY),
+            ft.Text("Solo para final de mes: inyecta a la BD los rendimientos e impuestos extraídos de los PDFs.", size=SIZE_BODY, color=COLOR_TEXT_SECONDARY),
         ])
 
         self.input_ingresos = ft.TextField(label="Ingresos Extras ($)", value="", hint_text="0.00", width=240, height=48, dense=True, content_padding=ft.padding.symmetric(horizontal=10, vertical=10), prefix_text="$ ", text_align=ft.TextAlign.RIGHT, border_color=ft.colors.BLUE_200, focused_border_color=ft.colors.BLUE_600)
@@ -504,7 +514,7 @@ class FlujoView(ft.Container):
         )
 
         titulo_generar = ft.Column([
-            ft.Text("Paso Final: Generación y Guardado", size=18, weight=ft.FontWeight.W_800, color=ft.colors.BLUE_800, text_align=ft.TextAlign.CENTER),
+            ft.Text("Paso Final: Generación y Guardado", size=SIZE_SECTION_TITLE, weight=WEIGHT_SECTION, color=COLOR_PRIMARY, text_align=ft.TextAlign.CENTER),
             ft.Container(height=5)
         ], horizontal_alignment=ft.CrossAxisAlignment.CENTER)
 

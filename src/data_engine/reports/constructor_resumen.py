@@ -8,6 +8,10 @@ AJUSTE_INGRESOS_CAJA = 0
 def safe_title(val):
     return str(val or "N/A").title()
 
+def _codigo_proveedor_limpio(expr: pl.Expr) -> pl.Expr:
+    """Normaliza el código de proveedor: limpia espacios y quita un '.0' final (numéricos leídos como '890801748.0')."""
+    return expr.fill_null("").cast(pl.Utf8, strict=False).str.strip_chars().str.replace(r"\.0$", "")
+
 def _mapear_cuenta_gasto(codigo, detalle, dict_cuentas_2335):
     cod_str = str(codigo).strip()
     if cod_str.endswith(".0"): cod_str = cod_str[:-2]
@@ -94,8 +98,7 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
     ingresos_caja_bruto = df_global.filter(
         (pl.col("Origen") == "CAJA") & 
         (pl.col("Ingreso") != 0) & 
-        (pl.col("Categoria_Flujo") != "Traslado_Salida") &
-        (~pl.col("Concepto").fill_null("").str.to_uppercase().str.contains("ANULA"))
+        (pl.col("Categoria_Flujo") != "Traslado_Salida")
     )["Ingreso"].sum()
     
     total_ingresos_mes = ingresos_bancos + ingresos_caja_bruto
@@ -107,7 +110,7 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
     
     if proveedores_lista or codigos_proveedores:
         condicion_por_nombre = pl.col("Tercero").fill_null("").str.to_uppercase().str.strip_chars().is_in(proveedores_lista) if proveedores_lista else pl.lit(False)
-        condicion_por_codigo = pl.col("Codigo_Proveedor").fill_null("").is_in(codigos_proveedores) if codigos_proveedores else pl.lit(False)
+        condicion_por_codigo = _codigo_proveedor_limpio(pl.col("Codigo_Proveedor")).is_in(codigos_proveedores) if codigos_proveedores else pl.lit(False)
         
         condicion_proveedores = (
             (condicion_por_nombre | condicion_por_codigo) &
@@ -139,7 +142,7 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
 
     desglose_bancos_salidas = [{"Concepto": f"Salidas {r['Origen'].capitalize()}", "Valor": r["Salidas_Operativas"]} for r in df_bancos.iter_rows(named=True)]
 
-    df_caja_ingresos_ccosto = df_global.filter((pl.col("Origen") == "CAJA") & (pl.col("Ingreso") != 0) & (pl.col("Categoria_Flujo") != "Traslado_Salida") & (~pl.col("Concepto").fill_null("").str.to_uppercase().str.contains("ANULA"))).group_by("Centro_Costos").agg(pl.col("Ingreso").sum().alias("Valor")).sort("Valor", descending=True)
+    df_caja_ingresos_ccosto = df_global.filter((pl.col("Origen") == "CAJA") & (pl.col("Ingreso") != 0) & (pl.col("Categoria_Flujo") != "Traslado_Salida")).group_by("Centro_Costos").agg(pl.col("Ingreso").sum().alias("Valor")).sort("Valor", descending=True)
     desglose_caja_ingresos = [{"Concepto": f"   > C.C: {safe_title(row['Centro_Costos'])}", "Valor": row["Valor"]} for row in df_caja_ingresos_ccosto.iter_rows(named=True)]
     
     dif_ingresos = ingresos_caja_bruto - sum(item["Valor"] for item in desglose_caja_ingresos)
@@ -160,7 +163,7 @@ def armar_resumen_gerencial(df_global: pl.DataFrame, df_detallado: pl.DataFrame,
     total_pagos_caja = df_prov_pagos_caja["Egreso"].sum()
     desglose_proveedores_caja = [{"Concepto": f"   > Prov Caja: {safe_title(row['Tercero'])}", "Valor": row["Valor"]} for row in df_prov_pagos_caja.group_by("Tercero").agg(pl.col("Egreso").sum().alias("Valor")).sort("Valor", descending=True).iter_rows(named=True)]
 
-    df_prov_pagos_bancos = df_global.filter((pl.col("Origen") == "CAJA_BANCOS") & (pl.col("Egreso") != 0) & (pl.col("Codigo_Proveedor").fill_null("").is_in(codigos_proveedores)))
+    df_prov_pagos_bancos = df_global.filter((pl.col("Origen") == "CAJA_BANCOS") & (pl.col("Egreso") != 0) & (_codigo_proveedor_limpio(pl.col("Codigo_Proveedor")).is_in(codigos_proveedores)))
     total_pagos_bancos = df_prov_pagos_bancos["Egreso"].sum()
     desglose_proveedores_bancos = [{"Concepto": f"   > Prov Banco: {safe_title(row['Tercero'])}", "Valor": row["Valor"]} for row in df_prov_pagos_bancos.group_by("Tercero").agg(pl.col("Egreso").sum().alias("Valor")).sort("Valor", descending=True).iter_rows(named=True)]
 

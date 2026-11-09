@@ -2,6 +2,12 @@
 import flet as ft
 import os
 import traceback
+from src.ui.theme import (
+    PADDING_VIEW, COLOR_BG, COLOR_TITLE, COLOR_TEXT_MUTED,
+    SIZE_TITLE, SIZE_XS, WEIGHT_TITLE, WEIGHT_BOLD,
+    SHADOW_CARD, BORDER_RADIUS_CARD, BORDER_CARD,
+    COLOR_CHART_INGRESOS
+)
 from src.ui.components.kpi_card import crear_tarjeta_kpi, crear_tarjeta_kpi_compuesta
 from src.ui.components.grafico_ingresos import GraficoIngresos
 from src.ui.components.grafico_egresos import GraficoEgresos
@@ -18,8 +24,8 @@ class DashboardView(ft.Container):
         super().__init__()
         self.page = page
         self.expand = True
-        self.padding = 30 
-        self.bgcolor = "#F8FAFC"
+        self.padding = PADDING_VIEW
+        self.bgcolor = COLOR_BG
         self.vista_activa = "INGRESOS"
         self.db_manager = DBManager()
         self.banco_global = "TODOS"
@@ -37,8 +43,8 @@ class DashboardView(ft.Container):
         self._contenedor_grafico = ft.Container(expand=True)
         self._fila_kpis = ft.Row(spacing=15)
         self._filtros_row = ft.Row(vertical_alignment=ft.CrossAxisAlignment.CENTER)
-        self._titulo_vista = ft.Text("", size=24, weight=ft.FontWeight.W_900, color=ft.colors.BLUE_900)
-        self._ultima_actualizacion = ft.Text("", size=11, color=ft.colors.GREY_500)
+        self._titulo_vista = ft.Text("", size=SIZE_TITLE, weight=WEIGHT_TITLE, color=COLOR_TITLE)
+        self._ultima_actualizacion = ft.Text("", size=SIZE_XS, color=COLOR_TEXT_MUTED)
         self._last_kpi_key = None
         self.build_ui()
 
@@ -249,7 +255,7 @@ class DashboardView(ft.Container):
                     filtros_resumen,
                     ft.Container(height=5),
                     self.vista_flujo_diario,
-                ], spacing=0, expand=True)
+                ], spacing=0)
 
             self._titulo_vista.value = "Dashboard Ejecutivo"
             self._ultima_actualizacion.value = f"Última actualización: {DataLoader.get_last_update()}"

@@ -41,29 +41,6 @@ class GraficoIngresos(BaseGrafico):
             return "Detalle Ingresos por Cajas"
         return self.nivel_dona.replace("_", " ").title()
 
-    def construir_ui(self):
-        self.content = ft.Column([
-            ft.Row([self.titulo_grafico, self.boton_volver], alignment=ft.MainAxisAlignment.SPACE_BETWEEN),
-            ft.Divider(height=10, color=ft.colors.GREY_200),
-            ft.Row([
-                ft.Container(
-                    content=ft.Column([
-                        ft.Container(content=self.dona_grafico, width=240, height=240),
-                        self.texto_hover
-                    ], horizontal_alignment=ft.CrossAxisAlignment.CENTER, spacing=10),
-                    width=240
-                ),
-                ft.Container(content=self.leyenda_contenedor, width=220, height=260),
-                ft.Container(
-                    content=ft.Column([self.tabla_detalle], scroll=ft.ScrollMode.AUTO),
-                    expand=True,
-                    height=260,
-                    border=ft.border.only(left=ft.border.BorderSide(1, ft.colors.GREY_200)),
-                    padding=ft.padding.only(left=20)
-                )
-            ], vertical_alignment=ft.CrossAxisAlignment.START)
-        ])
-
     def actualizar_dona_ui(self):
         datos = self._get_datos_nivel()
         if not datos or all(v == 0 for v in datos.values()):
